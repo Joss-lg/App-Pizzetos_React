@@ -50,7 +50,7 @@ function IconoInfo({ color, size = 18 }) {
 
 export default function ProductoDetalleScreen({ route, navigation }) {
   const { tema, modoOscuro } = useTema();
-  const { productos, sucursal, tamanos } = useDatos();
+  const { productos, sucursal } = useDatos();
   const insets = useSafeAreaInsets();
   const producto = productos.find((p) => p.id === route.params?.id);
 
@@ -68,20 +68,12 @@ export default function ProductoDetalleScreen({ route, navigation }) {
     );
   }
 
-  const esPizza = producto.categoria === 'Pizzas';
-  const esClasica = esPizza && producto.subcategoria === 'Clásicas';
-  const textoPrecio = `${producto.precioDesde ? 'desde ' : ''}$${producto.precio}`;
-
-  // Relacionadas: misma subcategoría si es pizza, si no la misma categoría
-  const relacionados = productos.filter((p) =>
-    p.id !== producto.id &&
-    (esPizza ? p.subcategoria === producto.subcategoria : p.categoria === producto.categoria)
+  const relacionados = productos.filter(
+    (p) => p.categoria === producto.categoria && p.id !== producto.id
   );
 
   const preguntar = async () => {
-    const mensaje = esPizza
-      ? `¡Hola Pizzeto's! Quiero una pizza ${producto.nombre} 🍕 ¿Qué tamaños tienen disponibles?`
-      : `¡Hola Pizzeto's! Quiero información sobre "${producto.nombre}" (${textoPrecio}) 🍕`;
+    const mensaje = `¡Hola Pizzeto's! Quiero información sobre "${producto.nombre}" ($${producto.precio}) 🍕`;
     try {
       await Linking.openURL(`https://wa.me/${sucursal.whatsapp}?text=${encodeURIComponent(mensaje)}`);
     } catch {
@@ -99,7 +91,7 @@ export default function ProductoDetalleScreen({ route, navigation }) {
 
   const compartir = () => {
     Share.share({
-      message: `🍕 ${producto.nombre} en Pizzeto's ${textoPrecio}\n${producto.descripcion}\n\nPide al ${sucursal.telefonoFormato}`,
+      message: `🍕 ${producto.nombre} en Pizzeto's por $${producto.precio}\n${producto.descripcion}\n\nPide al ${sucursal.telefonoFormato}`,
     }).catch(() => {});
   };
 
@@ -143,7 +135,7 @@ export default function ProductoDetalleScreen({ route, navigation }) {
           <View style={styles.etiquetasFila}>
             <View style={[styles.chipCategoria, { backgroundColor: modoOscuro ? '#2A2A2A' : '#F0F0F0' }]}>
               <Text style={[styles.chipCategoriaTexto, { color: tema.textoSecundario }]}>
-                {esPizza ? `Pizza ${producto.subcategoria ?? ''}`.trim() : producto.categoria}
+                {producto.categoria}
               </Text>
             </View>
             {producto.oferta && (
@@ -156,9 +148,6 @@ export default function ProductoDetalleScreen({ route, navigation }) {
           <Text style={[styles.nombre, { color: tema.texto }]}>{producto.nombre}</Text>
 
           <View style={styles.precioRow}>
-            {producto.precioDesde && (
-              <Text style={[styles.desde, { color: tema.textoSecundario }]}>Desde</Text>
-            )}
             <Text style={[styles.precio, { color: tema.precio }]}>${producto.precio}</Text>
             <Text style={[styles.moneda, { color: tema.textoSecundario }]}>MXN</Text>
           </View>
@@ -168,49 +157,10 @@ export default function ProductoDetalleScreen({ route, navigation }) {
           <Text style={styles.etiqueta}>DESCRIPCIÓN</Text>
           <Text style={[styles.descripcion, { color: tema.textoSecundario }]}>{producto.descripcion}</Text>
 
-          {/* ── TAMAÑOS (pizzas clásicas) ── */}
-          {esClasica && tamanos.length > 0 && (
-            <>
-              <Text style={[styles.etiqueta, { marginTop: 20 }]}>TAMAÑOS</Text>
-              <View style={[styles.tablaTamanos, { backgroundColor: tema.card }]}>
-                {tamanos.map((t, i) => (
-                  <View
-                    key={t.id}
-                    style={[
-                      styles.filaTamano,
-                      i < tamanos.length - 1 && { borderBottomWidth: 1, borderBottomColor: bordeSuave },
-                    ]}
-                  >
-                    <View style={styles.tamanoIzq}>
-                      <View style={styles.circuloContenedor}>
-                        <View
-                          style={[
-                            styles.circuloTamano,
-                            { width: 16 + i * 5, height: 16 + i * 5, borderRadius: (16 + i * 5) / 2 },
-                          ]}
-                        />
-                      </View>
-                      <View>
-                        <Text style={[styles.tamanoNombre, { color: tema.texto }]}>{t.nombre}</Text>
-                        <Text style={[styles.tamanoRebanadas, { color: tema.textoSecundario }]}>
-                          {t.rebanadas} rebanadas
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={[styles.tamanoPrecio, { color: tema.precio }]}>${t.precio}</Text>
-                  </View>
-                ))}
-              </View>
-            </>
-          )}
-
-          {/* ── AVISO ── */}
           <View style={[styles.aviso, { backgroundColor: modoOscuro ? '#2A2418' : '#FFF6E5' }]}>
             <IconoInfo color={modoOscuro ? '#E0C48A' : '#B07400'} />
             <Text style={[styles.avisoTexto, { color: modoOscuro ? '#E0C48A' : '#8A5A00' }]}>
-              {esPizza && !esClasica
-                ? 'Precio de tamaño chica. Pregunta por los demás tamaños por teléfono o WhatsApp.'
-                : 'Precios informativos. Haz tu pedido directo en sucursal, por teléfono o WhatsApp.'}
+              Precios informativos. Haz tu pedido directo en sucursal, por teléfono o WhatsApp.
             </Text>
           </View>
 
@@ -247,9 +197,7 @@ export default function ProductoDetalleScreen({ route, navigation }) {
                       <Text style={[styles.miniNombre, { color: tema.texto }]} numberOfLines={1}>
                         {p.nombre}
                       </Text>
-                      <Text style={[styles.miniPrecio, { color: tema.precio }]}>
-                        {p.precioDesde ? 'Desde ' : ''}${p.precio}
-                      </Text>
+                      <Text style={[styles.miniPrecio, { color: tema.precio }]}>${p.precio}</Text>
                     </View>
                   </Pressable>
                 ))}
@@ -322,41 +270,12 @@ const styles = StyleSheet.create({
 
   nombre: { fontFamily: 'Poppins_700Bold', fontSize: 28, lineHeight: 34 },
   precioRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 4 },
-  desde: { fontFamily: 'Poppins_600SemiBold', fontSize: 14 },
   precio: { fontFamily: 'Poppins_700Bold', fontSize: 32 },
   moneda: { fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
   linea: { height: 1, marginVertical: 18 },
 
   etiqueta: { color: '#F5A623', fontFamily: 'Poppins_600SemiBold', fontSize: 10, letterSpacing: 1 },
   descripcion: { fontFamily: 'Poppins_400Regular', fontSize: 15, lineHeight: 23, marginTop: 4 },
-
-  tablaTamanos: {
-    borderRadius: 16,
-    marginTop: 8,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  filaTamano: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  tamanoIzq: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  circuloContenedor: { width: 34, alignItems: 'center' },
-  circuloTamano: {
-    backgroundColor: 'rgba(245,166,35,0.2)',
-    borderWidth: 2,
-    borderColor: '#F5A623',
-  },
-  tamanoNombre: { fontFamily: 'Poppins_700Bold', fontSize: 14 },
-  tamanoRebanadas: { fontFamily: 'Poppins_400Regular', fontSize: 11 },
-  tamanoPrecio: { fontFamily: 'Poppins_700Bold', fontSize: 17 },
 
   aviso: {
     flexDirection: 'row', gap: 10, borderRadius: 14,

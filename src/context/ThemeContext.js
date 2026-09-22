@@ -1,6 +1,9 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
+import { useColorScheme } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ThemeContext = createContext();
+const CLAVE_TEMA = 'pizzetos:modoOscuro';
 
 export const colores = {
   claro: {
@@ -44,10 +47,34 @@ export const colores = {
 };
 
 export function ThemeProvider({ children }) {
-  const [modoOscuro, setModoOscuro] = useState(false);
+  const temaSistema = useColorScheme(); // 'light' | 'dark' | null
 
-  const toggleTema = () => setModoOscuro((prev) => !prev);
+  // null = el usuario nunca eligió, se sigue el tema del sistema
+  const [preferencia, setPreferencia] = useState(null);
+  const [cargado, setCargado] = useState(false);
+
+  // Al abrir la app, lee la elección guardada
+  useEffect(() => {
+    AsyncStorage.getItem(CLAVE_TEMA)
+      .then((valor) => {
+        if (valor !== null) setPreferencia(valor === 'true');
+      })
+      .catch(() => {})
+      .finally(() => setCargado(true));
+  }, []);
+
+  const modoOscuro = preferencia ?? temaSistema === 'dark';
+
+  const toggleTema = () => {
+    const nuevo = !modoOscuro;
+    setPreferencia(nuevo);
+    AsyncStorage.setItem(CLAVE_TEMA, String(nuevo)).catch(() => {});
+  };
+
   const tema = modoOscuro ? colores.oscuro : colores.claro;
+
+  // Espera a leer la preferencia para no mostrar un "parpadeo" del tema equivocado
+  if (!cargado) return null;
 
   return (
     <ThemeContext.Provider value={{ modoOscuro, toggleTema, tema }}>

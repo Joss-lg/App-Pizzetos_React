@@ -106,11 +106,19 @@ export const promociones = [
     titulo: 'Promo Lunes',
     descripcion: '2x1 en pizzas medianas todos los lunes',
     color: '#C0392B',
+    emoji: '🍕',
+    icono: 'pizza',
+    etiqueta: 'SOLO LUNES',
+    dia: 1, // 0 = domingo, 1 = lunes ... 6 = sábado. null si aplica diario
   },
   {
     id: 2,
     titulo: 'Delivery Gratis',
     descripcion: 'En pedidos mayores a $250 a domicilio',
     color: '#2C3E50',
+    emoji: '🛵',
+    icono: 'delivery',
+    etiqueta: 'TODOS LOS DÍAS',
+    dia: null,
   },
 ];
