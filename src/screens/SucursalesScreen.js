@@ -8,8 +8,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTema } from '../context/ThemeContext';
 import { useDatos } from '../context/DatosContext';
 import ImageBackground from '../components/ImagenFondo';
+import BotonContacto from '../components/BotonContacto';
 import {
-  IconoTelefono, IconoChat, IconoMapa, IconoPin, IconoReloj, IconoChevron,
+  IconoTelefono, IconoPin, IconoReloj, IconoChevron,
 } from '../components/IconosUI';
 
 const INICIALES = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
@@ -71,18 +72,12 @@ export default function SucursalesScreen() {
     return () => clearInterval(intervalo);
   }, [sucursal.horario.apertura, sucursal.horario.cierre]);
 
-  const urlMaps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(sucursal.direccion)}`;
-  const urlWhats = `https://wa.me/${sucursal.whatsapp}?text=${encodeURIComponent("¡Hola Pizzeto's! Quiero información 🍕")}`;
+  const urlMaps = 'https://maps.app.goo.gl/g1BFbYrN64AZBEqb7?g_st=ic';
+  const urlWhats = `https://wa.me/${sucursal.whatsapp}?text=${encodeURIComponent("¡Hola Pizzeto's! Quiero información")}`;
 
   const llamar = () => abrirEnlace(`tel:${sucursal.telefono}`, 'No se pudo abrir el marcador.');
   const whatsapp = () => abrirEnlace(urlWhats, 'No se pudo abrir WhatsApp.');
   const comoLlegar = () => abrirEnlace(urlMaps, 'No se pudo abrir el mapa.');
-
-  const acciones = [
-    { Icono: IconoTelefono, label: 'Llamar', color: '#27AE60', onPress: llamar },
-    { Icono: IconoChat, label: 'WhatsApp', color: '#25D366', onPress: whatsapp },
-    { Icono: IconoMapa, label: 'Cómo llegar', color: '#F5A623', onPress: comoLlegar },
-  ];
 
   const bordeSuave = modoOscuro ? '#2C2C2C' : '#EEEEEE';
   const fondoIconoInfo = modoOscuro ? 'rgba(245,166,35,0.15)' : 'rgba(245,166,35,0.12)';
@@ -119,24 +114,9 @@ export default function SucursalesScreen() {
 
         {/* ── BOTONES DE ACCIÓN ── */}
         <View style={styles.accionesRow}>
-          {acciones.map(({ Icono, label, color, onPress }) => (
-            <Pressable
-              key={label}
-              style={({ pressed }) => [
-                styles.accionBtn,
-                { backgroundColor: tema.card },
-                pressed && { opacity: 0.75 },
-              ]}
-              onPress={onPress}
-              accessibilityRole="button"
-              accessibilityLabel={label}
-            >
-              <View style={[styles.accionIcono, { backgroundColor: color }]}>
-                <Icono color="#FFFFFF" size={21} />
-              </View>
-              <Text style={[styles.accionLabel, { color: tema.texto }]}>{label}</Text>
-            </Pressable>
-          ))}
+          <BotonContacto tipo="llamar" onPress={llamar} />
+          <BotonContacto tipo="whatsapp" onPress={whatsapp} />
+          <BotonContacto tipo="mapa" onPress={comoLlegar} />
         </View>
 
         {/* ── INFORMACIÓN ── */}
@@ -238,12 +218,6 @@ const styles = StyleSheet.create({
   estadoTexto: { color: '#FFF', fontFamily: 'Poppins_700Bold', fontSize: 9, letterSpacing: 0.5 },
 
   accionesRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  accionBtn: { flex: 1, alignItems: 'center', borderRadius: 18, paddingVertical: 16, ...sombra },
-  accionIcono: {
-    width: 46, height: 46, borderRadius: 23,
-    justifyContent: 'center', alignItems: 'center', marginBottom: 8,
-  },
-  accionLabel: { fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
 
   infoCard: { borderRadius: 18, marginTop: 14, overflow: 'hidden', ...sombra },
   infoFila: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },

@@ -1,16 +1,25 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Modal, View, Text, StyleSheet, Pressable, Animated,
   Share, Linking, Alert, useWindowDimensions,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import Svg, { Path } from 'react-native-svg';
 import { useTema } from '../context/ThemeContext';
 import { useDatos } from '../context/DatosContext';
-import ImageBackground from './ImagenFondo';
 import BotonFavorito from './BotonFavorito';
 import { IconoChat } from './IconosUI';
+
+// Forma inicial mientras carga la foto (las fotos de la página son horizontales)
+const PROPORCION_INICIAL = 1.9;
+
+// Límite para fotos muy altas: la tarjeta nunca se sale de la pantalla
+const PROPORCION_MINIMA = 0.9;
+
+// Recuerda la forma de cada foto ya cargada (así no "brinca" la segunda vez)
+const proporcionesConocidas = new Map();
 
 function IconoCompartir({ color, size = 20 }) {
   return (
@@ -33,6 +42,10 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
   const { width } = useWindowDimensions();
   const anchoTarjeta = width - 40;
 
+  const [proporcion, setProporcion] = useState(
+    () => proporcionesConocidas.get(producto.imagen) ?? PROPORCION_INICIAL
+  );
+
   const escala = useRef(new Animated.Value(0.85)).current;
   const opacidad = useRef(new Animated.Value(0)).current;
 
@@ -49,6 +62,16 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
     ]).start();
   }, [visible]);
 
+  // Al cargar la foto, el recuadro toma su forma exacta para que se vea completa
+  const alCargarFoto = (e) => {
+    const ancho = e?.source?.width;
+    const alto = e?.source?.height;
+    if (!ancho || !alto) return;
+    const nueva = Math.max(ancho / alto, PROPORCION_MINIMA);
+    proporcionesConocidas.set(producto.imagen, nueva);
+    setProporcion(nueva);
+  };
+
   // Animación de cierre; "despues" se ejecuta cuando termina (ej. navegar)
   const cerrar = (despues) => {
     Animated.parallel([
@@ -61,8 +84,9 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
   };
 
   const compartir = () => {
+    const telefono = sucursal.telefonoFormato || sucursal.telefono;
     Share.share({
-      message: `🍕 ${producto.nombre} en Pizzeto's ${textoPrecio}\n${producto.descripcion}\n\nPide al ${sucursal.telefonoFormato}`,
+      message: `🍕 ${producto.nombre} en Pizzeto's ${textoPrecio}\n${producto.descripcion}\n\nPide al ${telefono}`,
     }).catch(() => {});
   };
 
@@ -98,15 +122,21 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
             },
           ]}
         >
-          {/* Foto grande */}
-          <ImageBackground
-            source={{ uri: producto.imagen }}
-            style={[styles.imagen, { height: anchoTarjeta * 0.78 }]}
-          >
+          {/* Foto completa: el recuadro toma la forma real de la imagen */}
+          <View style={[styles.imagen, { width: anchoTarjeta, height: anchoTarjeta / proporcion }]}>
+            <Image
+              source={{ uri: producto.imagen }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              transition={200}
+              cachePolicy="memory-disk"
+              onLoad={alCargarFoto}
+            />
             <LinearGradient
               colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.25)', 'rgba(0,0,0,0.85)']}
               locations={[0, 0.5, 1]}
               style={StyleSheet.absoluteFill}
+              pointerEvents="none"
             />
             <BotonFavorito id={producto.id} size={40} style={styles.favorito} />
             {producto.oferta && (
@@ -120,9 +150,9 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
                   ? `PIZZA ${producto.subcategoria.toUpperCase()}`
                   : producto.categoria.toUpperCase()}
               </Text>
-              <Text style={styles.nombre}>{producto.nombre}</Text>
+              <Text style={styles.nombre} numberOfLines={1}>{producto.nombre}</Text>
             </View>
-          </ImageBackground>
+          </View>
 
           {/* Info */}
           <View style={styles.cuerpo}>
@@ -184,6 +214,7 @@ const styles = StyleSheet.create({
   },
   imagen: {
     justifyContent: 'flex-end',
+    overflow: 'hidden',
   },
   favorito: {
     position: 'absolute',
@@ -205,7 +236,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
   },
   textoImagen: {
-    padding: 18,
+    paddingHorizontal: 18,
+    paddingBottom: 14,
   },
   categoria: {
     color: '#F5A623',
@@ -216,8 +248,8 @@ const styles = StyleSheet.create({
   nombre: {
     color: '#FFFFFF',
     fontFamily: 'Poppins_700Bold',
-    fontSize: 28,
-    lineHeight: 34,
+    fontSize: 26,
+    lineHeight: 32,
   },
   cuerpo: {
     padding: 18,

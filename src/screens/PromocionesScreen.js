@@ -1,95 +1,113 @@
+// src/screens/PromocionesScreen.js
+// Pestaña "Promos": SOLO Paquete 1, 2, 3 y Promo Magno.
+// - Arriba: el paquete en oferta como tarjeta grande destacada.
+// - Luego: los demás paquetes, cada uno con botón directo a WhatsApp.
+// - Al final: cómo pedir en 3 pasos + botones de llamar y WhatsApp.
+
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, Pressable,
-  Linking, Alert, Dimensions, Share,
+  RefreshControl, Linking, Alert, Animated,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { Image } from 'expo-image';
-import Svg, { Path, Circle } from 'react-native-svg';
+import * as Haptics from 'expo-haptics';
 import { useTema } from '../context/ThemeContext';
 import { useDatos } from '../context/DatosContext';
-import ImageBackground from '../components/ImagenFondo';
 import BotonFavorito from '../components/BotonFavorito';
 import { IconoChat, IconoTelefono } from '../components/IconosUI';
+import { IDS_PAQUETES_PROMOS, esPaqueteDePromos } from '../data/paquetes';
 
-const { width } = Dimensions.get('window');
+const NARANJA = '#F5A623';
+const VERDE_WHATS = '#25D366';
+const PROPORCION_FOTO = 16 / 9; // las fotos de los paquetes son horizontales
 
-const trazo = (color, grosor = 2.2) => ({
-  stroke: color,
-  strokeWidth: grosor,
-  strokeLinecap: 'round',
-  strokeLinejoin: 'round',
-  fill: 'none',
-});
+const PASOS = [
+  { titulo: 'Elige tu paquete', texto: 'Revisa qué incluye cada uno.' },
+  { titulo: 'Escríbenos o llama', texto: 'Por WhatsApp o por teléfono.' },
+  { titulo: 'Disfrútalo', texto: 'La pizza de tu vida, lista para ti.' },
+];
 
-function IconoAtras({ color, size = 22 }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
-      <Path d="M15 6l-6 6 6 6" {...trazo(color)} />
-    </Svg>
-  );
+function formatoPrecio(valor) {
+  const n = Number(valor);
+  if (isNaN(n)) return '';
+  return '$' + n.toFixed(Number.isInteger(n) ? 0 : 2);
 }
 
-function IconoCompartir({ color, size = 20 }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
-      <Path d="M12 3v12M8 7l4-4 4 4M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7" {...trazo(color, 2)} />
-    </Svg>
-  );
+// ¿La sucursal está abierta ahorita? (usa sucursal.horario, igual que la pantalla Sucursal)
+function estaAbierta(sucursal) {
+  if (!sucursal) return null;
+  const abre = Number(sucursal.horario?.apertura ?? sucursal.horaApertura ?? sucursal.hora_apertura);
+  const cierra = Number(sucursal.horario?.cierre ?? sucursal.horaCierre ?? sucursal.hora_cierre);
+  if (isNaN(abre) || isNaN(cierra)) return null;
+  const hora = new Date().getHours();
+  return hora >= abre && hora < cierra;
 }
 
-function IconoInfo({ color, size = 18 }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
-      <Circle cx="12" cy="12" r="8.5" {...trazo(color, 1.8)} />
-      <Path d="M12 11v5" {...trazo(color, 2)} />
-      <Circle cx="12" cy="8" r="1" fill={color} />
-    </Svg>
-  );
-}
-
-export default function ProductoDetalleScreen({ route, navigation }) {
+export default function PromocionesScreen() {
   const { tema, modoOscuro } = useTema();
-  const { productos, sucursal, tamanos } = useDatos();
-  const insets = useSafeAreaInsets();
-  const producto = productos.find((p) => p.id === route.params?.id);
+  const { productos, sucursal, recargar } = useDatos();
+  const navigation = useNavigation();
+  const [refrescando, setRefrescando] = useState(false);
 
-  if (!producto) {
-    return (
-      <View style={[styles.noEncontrado, { backgroundColor: tema.fondo }]}>
-        <Text style={{ fontSize: 48 }}>🍕</Text>
-        <Text style={[styles.noEncontradoTexto, { color: tema.texto }]}>
-          Este producto ya no está disponible
-        </Text>
-        <Pressable onPress={() => navigation.goBack()}>
-          <Text style={styles.volverTexto}>Volver</Text>
-        </Pressable>
-      </View>
+  // Animación de entrada de la tarjeta destacada
+  const entrada = useRef(new Animated.Value(0)).current;
+
+  // Solo los paquetes de Promos, en el orden 1, 2, 3, Magno
+  const paquetes = useMemo(() => {
+    const lista = productos.filter((p) => esPaqueteDePromos(p));
+    lista.sort(
+      (a, b) =>
+        IDS_PAQUETES_PROMOS.indexOf(Number(a.id)) - IDS_PAQUETES_PROMOS.indexOf(Number(b.id))
     );
-  }
+    return lista;
+  }, [productos]);
 
-  const esPizza = producto.categoria === 'Pizzas';
-  const esClasica = esPizza && producto.subcategoria === 'Clásicas';
-  const textoPrecio = `${producto.precioDesde ? 'desde ' : ''}$${producto.precio}`;
+  // El destacado es el que está en oferta (si no hay, el primero)
+  const destacado = paquetes.find((p) => p.oferta) || paquetes[0];
+  const resto = paquetes.filter((p) => p.id !== destacado?.id);
 
-  // Relacionadas: misma subcategoría si es pizza, si no la misma categoría
-  const relacionados = productos.filter((p) =>
-    p.id !== producto.id &&
-    (esPizza ? p.subcategoria === producto.subcategoria : p.categoria === producto.categoria)
-  );
+  useEffect(() => {
+    if (!destacado) return;
+    entrada.setValue(0);
+    Animated.spring(entrada, {
+      toValue: 1,
+      friction: 8,
+      tension: 60,
+      useNativeDriver: true,
+    }).start();
+  }, [destacado?.id]);
 
-  const preguntar = async () => {
-    const mensaje = esPizza
-      ? `¡Hola Pizzeto's! Quiero una pizza ${producto.nombre} 🍕 ¿Qué tamaños tienen disponibles?`
-      : `¡Hola Pizzeto's! Quiero información sobre "${producto.nombre}" (${textoPrecio}) 🍕`;
+  const abierta = estaAbierta(sucursal);
+
+  const alRefrescar = async () => {
+    setRefrescando(true);
+    await recargar();
+    setRefrescando(false);
+  };
+
+  const abrirDetalle = (p) => {
+    navigation.navigate('ProductoDetalle', { id: p.id });
+  };
+
+  const pedirPorWhatsApp = async (paquete) => {
+    if (!sucursal?.whatsapp) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const mensaje = paquete
+      ? `¡Hola Pizzeto's! Quiero pedir el ${paquete.nombre} (${formatoPrecio(paquete.precio)}).`
+      : "¡Hola Pizzeto's! Quiero información sobre sus paquetes.";
     try {
-      await Linking.openURL(`https://wa.me/${sucursal.whatsapp}?text=${encodeURIComponent(mensaje)}`);
+      await Linking.openURL(
+        `https://wa.me/${sucursal.whatsapp}?text=${encodeURIComponent(mensaje)}`
+      );
     } catch {
       Alert.alert('Ups', 'No se pudo abrir WhatsApp.');
     }
   };
 
   const llamar = async () => {
+    if (!sucursal?.telefono) return;
     try {
       await Linking.openURL(`tel:${sucursal.telefono}`);
     } catch {
@@ -97,305 +115,424 @@ export default function ProductoDetalleScreen({ route, navigation }) {
     }
   };
 
-  const compartir = () => {
-    Share.share({
-      message: `🍕 ${producto.nombre} en Pizzeto's ${textoPrecio}\n${producto.descripcion}\n\nPide al ${sucursal.telefonoFormato}`,
-    }).catch(() => {});
-  };
-
-  const bordeSuave = modoOscuro ? '#2C2C2C' : '#EEEEEE';
+  const bordeSuave = modoOscuro ? '#333333' : '#E8E8E8';
+  const fondoSuave = modoOscuro ? '#2A2A2A' : '#F4F1EC';
 
   return (
-    <View style={[styles.contenedor, { backgroundColor: tema.fondo }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
-
-        {/* ── FOTO GRANDE ── */}
-        <ImageBackground source={{ uri: producto.imagen }} style={styles.imagen}>
-          {/* Degradado arriba para que los botones siempre se vean */}
-          <LinearGradient
-            colors={['rgba(0,0,0,0.45)', 'rgba(0,0,0,0)']}
-            style={[styles.degradadoSuperior, { height: insets.top + 90 }]}
+    <SafeAreaView edges={['top']} style={[styles.safeArea, { backgroundColor: tema.fondo }]}>
+      <ScrollView
+        style={{ backgroundColor: tema.fondo }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refrescando}
+            onRefresh={alRefrescar}
+            tintColor={NARANJA}
+            colors={[NARANJA]}
           />
-          <View style={[styles.barraSuperior, { top: insets.top + 8 }]}>
-            <Pressable
-              style={({ pressed }) => [styles.botonCircular, pressed && { opacity: 0.7 }]}
-              onPress={() => navigation.goBack()}
-              accessibilityLabel="Regresar"
-            >
-              <IconoAtras color="#1A1A1A" />
-            </Pressable>
-
-            <View style={styles.botonesDerecha}>
-              <BotonFavorito id={producto.id} size={42} />
-              <Pressable
-                style={({ pressed }) => [styles.botonCircular, pressed && { opacity: 0.7 }]}
-                onPress={compartir}
-                accessibilityLabel="Compartir producto"
-              >
-                <IconoCompartir color="#1A1A1A" />
-              </Pressable>
-            </View>
-          </View>
-        </ImageBackground>
-
-        {/* ── INFO ── */}
-        <View style={[styles.info, { backgroundColor: tema.fondo }]}>
-          <View style={styles.etiquetasFila}>
-            <View style={[styles.chipCategoria, { backgroundColor: modoOscuro ? '#2A2A2A' : '#F0F0F0' }]}>
-              <Text style={[styles.chipCategoriaTexto, { color: tema.textoSecundario }]}>
-                {esPizza ? `Pizza ${producto.subcategoria ?? ''}`.trim() : producto.categoria}
-              </Text>
-            </View>
-            {producto.oferta && (
-              <View style={styles.badgeOferta}>
-                <Text style={styles.badgeOfertaTexto}>🔥 Oferta especial</Text>
+        }
+      >
+        {/* ── ENCABEZADO ── */}
+        <View style={styles.encabezado}>
+          <View style={styles.filaTitulo}>
+            <Text style={[styles.titulo, { color: tema.texto }]}>Paquetes</Text>
+            {abierta !== null && (
+              <View style={[styles.estado, { backgroundColor: fondoSuave }]}>
+                <View
+                  style={[
+                    styles.puntoEstado,
+                    { backgroundColor: abierta ? '#27AE60' : '#C0392B' },
+                  ]}
+                />
+                <Text style={[styles.textoEstado, { color: tema.texto }]}>
+                  {abierta ? 'Abierto ahora' : 'Cerrado'}
+                </Text>
               </View>
             )}
           </View>
+          <Text style={[styles.subtitulo, { color: tema.textoSecundario }]}>
+            Pizza, refresco y más en un solo pedido.
+          </Text>
+        </View>
 
-          <Text style={[styles.nombre, { color: tema.texto }]}>{producto.nombre}</Text>
-
-          <View style={styles.precioRow}>
-            {producto.precioDesde && (
-              <Text style={[styles.desde, { color: tema.textoSecundario }]}>Desde</Text>
-            )}
-            <Text style={[styles.precio, { color: tema.precio }]}>${producto.precio}</Text>
-            <Text style={[styles.moneda, { color: tema.textoSecundario }]}>MXN</Text>
-          </View>
-
-          <View style={[styles.linea, { backgroundColor: bordeSuave }]} />
-
-          <Text style={styles.etiqueta}>DESCRIPCIÓN</Text>
-          <Text style={[styles.descripcion, { color: tema.textoSecundario }]}>{producto.descripcion}</Text>
-
-          {/* ── TAMAÑOS (pizzas clásicas) ── */}
-          {esClasica && tamanos.length > 0 && (
-            <>
-              <Text style={[styles.etiqueta, { marginTop: 20 }]}>TAMAÑOS</Text>
-              <View style={[styles.tablaTamanos, { backgroundColor: tema.card }]}>
-                {tamanos.map((t, i) => (
-                  <View
-                    key={t.id}
-                    style={[
-                      styles.filaTamano,
-                      i < tamanos.length - 1 && { borderBottomWidth: 1, borderBottomColor: bordeSuave },
-                    ]}
-                  >
-                    <View style={styles.tamanoIzq}>
-                      <View style={styles.circuloContenedor}>
-                        <View
-                          style={[
-                            styles.circuloTamano,
-                            { width: 16 + i * 5, height: 16 + i * 5, borderRadius: (16 + i * 5) / 2 },
-                          ]}
-                        />
-                      </View>
-                      <View>
-                        <Text style={[styles.tamanoNombre, { color: tema.texto }]}>{t.nombre}</Text>
-                        <Text style={[styles.tamanoRebanadas, { color: tema.textoSecundario }]}>
-                          {t.rebanadas} rebanadas
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={[styles.tamanoPrecio, { color: tema.precio }]}>${t.precio}</Text>
-                  </View>
-                ))}
-              </View>
-            </>
-          )}
-
-          {/* ── AVISO ── */}
-          <View style={[styles.aviso, { backgroundColor: modoOscuro ? '#2A2418' : '#FFF6E5' }]}>
-            <IconoInfo color={modoOscuro ? '#E0C48A' : '#B07400'} />
-            <Text style={[styles.avisoTexto, { color: modoOscuro ? '#E0C48A' : '#8A5A00' }]}>
-              {esPizza && !esClasica
-                ? 'Precio de tamaño chica. Pregunta por los demás tamaños por teléfono o WhatsApp.'
-                : 'Precios informativos. Haz tu pedido directo en sucursal, por teléfono o WhatsApp.'}
-            </Text>
-          </View>
-
-          {/* ── RELACIONADOS ── */}
-          {relacionados.length > 0 && (
-            <>
-              <View style={styles.seccionHeader}>
-                <Text style={[styles.seccionTitulo, { color: tema.texto }]}>TAMBIÉN TE PUEDE GUSTAR</Text>
-                <View style={styles.lineaAmarilla} />
-              </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.relacionadosLista}
+        {paquetes.length === 0 ? (
+          <Text style={[styles.vacio, { color: tema.textoSecundario }]}>
+            Cargando los paquetes...{'\n'}Desliza hacia abajo para actualizar.
+          </Text>
+        ) : (
+          <>
+            {/* ── DESTACADO ── */}
+            {destacado && (
+              <Animated.View
+                style={[
+                  styles.bloque,
+                  {
+                    opacity: entrada,
+                    transform: [
+                      {
+                        translateY: entrada.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [24, 0],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
               >
-                {relacionados.map((p) => (
-                  <Pressable
-                    key={p.id}
-                    style={({ pressed }) => [
-                      styles.miniCard,
-                      { backgroundColor: tema.card },
-                      pressed && { opacity: 0.85 },
-                    ]}
-                    onPress={() => navigation.push('ProductoDetalle', { id: p.id })}
-                  >
+                <Pressable
+                  onPress={() => abrirDetalle(destacado)}
+                  style={({ pressed }) => [
+                    styles.tarjetaDestacada,
+                    { backgroundColor: tema.card, borderColor: NARANJA },
+                    pressed && { transform: [{ scale: 0.985 }] },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${destacado.nombre}, ${formatoPrecio(destacado.precio)}`}
+                >
+                  <View style={styles.fotoDestacada}>
                     <Image
-                      source={{ uri: p.imagen }}
-                      style={styles.miniImagen}
+                      source={{ uri: destacado.imagen }}
+                      style={StyleSheet.absoluteFill}
                       contentFit="cover"
                       transition={250}
                       cachePolicy="memory-disk"
                     />
-                    <View style={styles.miniInfo}>
-                      <Text style={[styles.miniNombre, { color: tema.texto }]} numberOfLines={1}>
-                        {p.nombre}
+                    <View style={styles.favorito}>
+                      <BotonFavorito id={destacado.id} size={38} />
+                    </View>
+                  </View>
+
+                  <View style={styles.infoDestacada}>
+                    <View style={styles.cintaDestacada}>
+                      <Text style={styles.textoCinta}>
+                        {destacado.oferta ? 'Oferta' : 'Destacado'}
                       </Text>
-                      <Text style={[styles.miniPrecio, { color: tema.precio }]}>
-                        {p.precioDesde ? 'Desde ' : ''}${p.precio}
+                    </View>
+
+                    <View style={styles.filaNombrePrecio}>
+                      <Text style={[styles.nombreDestacado, { color: tema.texto }]} numberOfLines={2}>
+                        {destacado.nombre}
                       </Text>
+                      <Text style={[styles.precioDestacado, { color: tema.precio }]}>
+                        {formatoPrecio(destacado.precio)}
+                      </Text>
+                    </View>
+
+                    {!!destacado.descripcion && (
+                      <Text style={[styles.descripcionDestacada, { color: tema.textoSecundario }]}>
+                        {destacado.descripcion}
+                      </Text>
+                    )}
+
+                    <View style={styles.filaBotones}>
+                      <Pressable
+                        onPress={() => pedirPorWhatsApp(destacado)}
+                        style={({ pressed }) => [styles.botonWhats, pressed && { opacity: 0.85 }]}
+                        accessibilityLabel={`Pedir ${destacado.nombre} por WhatsApp`}
+                      >
+                        <IconoChat color="#FFFFFF" size={18} />
+                        <Text style={styles.textoWhats}>Pedir por WhatsApp</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => abrirDetalle(destacado)}
+                        style={({ pressed }) => [
+                          styles.botonDetalle,
+                          { borderColor: bordeSuave },
+                          pressed && { opacity: 0.7 },
+                        ]}
+                        accessibilityLabel={`Ver detalle de ${destacado.nombre}`}
+                      >
+                        <Text style={[styles.textoDetalle, { color: tema.texto }]}>Ver</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </Pressable>
+              </Animated.View>
+            )}
+
+            {/* ── LOS DEMÁS ── */}
+            {resto.length > 0 && (
+              <View style={styles.bloque}>
+                <View style={styles.seccionHeader}>
+                  <Text style={[styles.seccionTitulo, { color: tema.texto }]}>MÁS PAQUETES</Text>
+                  <View style={styles.lineaAmarilla} />
+                </View>
+
+                {resto.map((p) => (
+                  <Pressable
+                    key={p.id}
+                    onPress={() => abrirDetalle(p)}
+                    style={({ pressed }) => [
+                      styles.tarjeta,
+                      { backgroundColor: tema.card },
+                      pressed && { transform: [{ scale: 0.985 }] },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${p.nombre}, ${formatoPrecio(p.precio)}`}
+                  >
+                    <View style={styles.foto}>
+                      <Image
+                        source={{ uri: p.imagen }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                        transition={250}
+                        cachePolicy="memory-disk"
+                      />
+                      <View style={styles.favorito}>
+                        <BotonFavorito id={p.id} size={34} />
+                      </View>
+                    </View>
+
+                    <View style={styles.infoTarjeta}>
+                      <View style={styles.columnaTexto}>
+                        <Text style={[styles.nombre, { color: tema.texto }]} numberOfLines={1}>
+                          {p.nombre}
+                        </Text>
+                        {!!p.descripcion && (
+                          <Text
+                            style={[styles.descripcion, { color: tema.textoSecundario }]}
+                            numberOfLines={2}
+                          >
+                            {p.descripcion}
+                          </Text>
+                        )}
+                        <Text style={[styles.precio, { color: tema.precio }]}>
+                          {formatoPrecio(p.precio)}
+                          <Text style={[styles.moneda, { color: tema.textoSecundario }]}> MXN</Text>
+                        </Text>
+                      </View>
+
+                      <Pressable
+                        onPress={() => pedirPorWhatsApp(p)}
+                        hitSlop={8}
+                        style={({ pressed }) => [styles.botonWhatsRedondo, pressed && { opacity: 0.85 }]}
+                        accessibilityLabel={`Pedir ${p.nombre} por WhatsApp`}
+                      >
+                        <IconoChat color="#FFFFFF" size={20} />
+                      </Pressable>
                     </View>
                   </Pressable>
                 ))}
-              </ScrollView>
-            </>
-          )}
-        </View>
+              </View>
+            )}
+
+            {/* ── CÓMO PEDIR ── */}
+            <View style={styles.bloque}>
+              <View style={styles.seccionHeader}>
+                <Text style={[styles.seccionTitulo, { color: tema.texto }]}>CÓMO PEDIR</Text>
+                <View style={styles.lineaAmarilla} />
+              </View>
+
+              <View style={[styles.cajaPasos, { backgroundColor: tema.card }]}>
+                {PASOS.map((paso, i) => (
+                  <View key={paso.titulo} style={styles.paso}>
+                    <View style={styles.columnaNumero}>
+                      <View style={styles.numero}>
+                        <Text style={styles.textoNumero}>{i + 1}</Text>
+                      </View>
+                      {i < PASOS.length - 1 && (
+                        <View style={[styles.lineaPaso, { backgroundColor: bordeSuave }]} />
+                      )}
+                    </View>
+                    <View style={styles.textoPaso}>
+                      <Text style={[styles.tituloPaso, { color: tema.texto }]}>{paso.titulo}</Text>
+                      <Text style={[styles.detallePaso, { color: tema.textoSecundario }]}>
+                        {paso.texto}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+
+                {!!sucursal && (
+                  <View style={styles.filaBotones}>
+                    <Pressable
+                      onPress={llamar}
+                      style={({ pressed }) => [
+                        styles.botonLlamar,
+                        { borderColor: bordeSuave },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                      accessibilityLabel="Llamar a la sucursal"
+                    >
+                      <IconoTelefono color={tema.texto} size={18} />
+                      <Text style={[styles.textoLlamar, { color: tema.texto }]}>Llamar</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => pedirPorWhatsApp(null)}
+                      style={({ pressed }) => [styles.botonWhats, pressed && { opacity: 0.85 }]}
+                      accessibilityLabel="Escribir por WhatsApp"
+                    >
+                      <IconoChat color="#FFFFFF" size={18} />
+                      <Text style={styles.textoWhats}>WhatsApp</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            </View>
+          </>
+        )}
+
+        {/* Espacio para que la barra flotante no tape el contenido */}
+        <View style={{ height: 110 }} />
       </ScrollView>
-
-      {/* ── BOTONES FIJOS ABAJO ── */}
-      <View
-        style={[
-          styles.footer,
-          {
-            backgroundColor: tema.header,
-            paddingBottom: insets.bottom + 12,
-            borderTopColor: bordeSuave,
-          },
-        ]}
-      >
-        <Pressable
-          style={({ pressed }) => [
-            styles.botonLlamar,
-            { borderColor: modoOscuro ? '#3A3A3A' : '#E0E0E0' },
-            pressed && { opacity: 0.7 },
-          ]}
-          onPress={llamar}
-          accessibilityLabel="Llamar a la sucursal"
-        >
-          <IconoTelefono color={tema.texto} size={21} />
-        </Pressable>
-
-        <Pressable
-          style={({ pressed }) => [styles.botonWhats, pressed && { opacity: 0.85 }]}
-          onPress={preguntar}
-          accessibilityLabel="Preguntar por WhatsApp"
-        >
-          <IconoChat color="#FFFFFF" size={20} />
-          <Text style={styles.botonWhatsTexto}>Preguntar por WhatsApp</Text>
-        </Pressable>
-      </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  contenedor: { flex: 1 },
+  safeArea: { flex: 1 },
 
-  imagen: { width, height: width * 0.9 },
-  degradadoSuperior: { position: 'absolute', top: 0, left: 0, right: 0 },
-  barraSuperior: {
-    position: 'absolute', left: 16, right: 16,
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-  },
-  botonesDerecha: { flexDirection: 'row', gap: 10 },
-  botonCircular: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    justifyContent: 'center', alignItems: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15, shadowRadius: 6, elevation: 3,
-  },
-
-  info: { marginTop: -28, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20 },
-  etiquetasFila: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  chipCategoria: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
-  chipCategoriaTexto: { fontFamily: 'Poppins_600SemiBold', fontSize: 11 },
-  badgeOferta: { backgroundColor: '#F5A623', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
-  badgeOfertaTexto: { fontFamily: 'Poppins_700Bold', fontSize: 11, color: '#1A1A1A' },
-
-  nombre: { fontFamily: 'Poppins_700Bold', fontSize: 28, lineHeight: 34 },
-  precioRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 4 },
-  desde: { fontFamily: 'Poppins_600SemiBold', fontSize: 14 },
-  precio: { fontFamily: 'Poppins_700Bold', fontSize: 32 },
-  moneda: { fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
-  linea: { height: 1, marginVertical: 18 },
-
-  etiqueta: { color: '#F5A623', fontFamily: 'Poppins_600SemiBold', fontSize: 10, letterSpacing: 1 },
-  descripcion: { fontFamily: 'Poppins_400Regular', fontSize: 15, lineHeight: 23, marginTop: 4 },
-
-  tablaTamanos: {
-    borderRadius: 16,
-    marginTop: 8,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  filaTamano: {
+  // Encabezado
+  encabezado: { paddingHorizontal: 16, paddingTop: 12 },
+  filaTitulo: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    justifyContent: 'space-between',
   },
-  tamanoIzq: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  circuloContenedor: { width: 34, alignItems: 'center' },
-  circuloTamano: {
-    backgroundColor: 'rgba(245,166,35,0.2)',
+  titulo: { fontFamily: 'Poppins_700Bold', fontSize: 30, lineHeight: 38 },
+  subtitulo: { fontFamily: 'Poppins_400Regular', fontSize: 13, lineHeight: 19, marginTop: 2 },
+  estado: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  puntoEstado: { width: 8, height: 8, borderRadius: 4 },
+  textoEstado: { fontFamily: 'Poppins_600SemiBold', fontSize: 11 },
+
+  bloque: { marginTop: 20, paddingHorizontal: 16 },
+
+  // Destacado
+  tarjetaDestacada: {
+    borderRadius: 24,
+    overflow: 'hidden',
     borderWidth: 2,
-    borderColor: '#F5A623',
   },
-  tamanoNombre: { fontFamily: 'Poppins_700Bold', fontSize: 14 },
-  tamanoRebanadas: { fontFamily: 'Poppins_400Regular', fontSize: 11 },
-  tamanoPrecio: { fontFamily: 'Poppins_700Bold', fontSize: 17 },
+  fotoDestacada: { width: '100%', aspectRatio: PROPORCION_FOTO, backgroundColor: '#1A1612' },
+  favorito: { position: 'absolute', top: 10, right: 10 },
+  infoDestacada: { padding: 16, paddingTop: 14 },
+  cintaDestacada: {
+    alignSelf: 'flex-start',
+    backgroundColor: NARANJA,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    marginBottom: 8,
+  },
+  textoCinta: { fontFamily: 'Poppins_700Bold', fontSize: 11, color: '#1A1A1A' },
+  filaNombrePrecio: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  nombreDestacado: { flex: 1, fontFamily: 'Poppins_700Bold', fontSize: 22, lineHeight: 28 },
+  precioDestacado: { fontFamily: 'Poppins_700Bold', fontSize: 30, lineHeight: 34 },
+  descripcionDestacada: {
+    fontFamily: 'Poppins_400Regular',
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
+  },
 
-  aviso: {
-    flexDirection: 'row', gap: 10, borderRadius: 14,
-    padding: 14, marginTop: 18, alignItems: 'center',
-  },
-  avisoTexto: { flex: 1, fontFamily: 'Poppins_400Regular', fontSize: 12, lineHeight: 17 },
-
-  seccionHeader: { flexDirection: 'row', alignItems: 'center', marginTop: 28, marginBottom: 12 },
-  seccionTitulo: { fontFamily: 'Poppins_700Bold', fontSize: 12, letterSpacing: 1 },
-  lineaAmarilla: { flex: 1, height: 2, backgroundColor: '#F5A623', marginLeft: 10, borderRadius: 2 },
-
-  relacionadosLista: { gap: 12, paddingRight: 4, paddingBottom: 6 },
-  miniCard: {
-    width: 150, borderRadius: 16, overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08, shadowRadius: 6, elevation: 2,
-  },
-  miniImagen: { width: 150, height: 100 },
-  miniInfo: { padding: 10 },
-  miniNombre: { fontFamily: 'Poppins_600SemiBold', fontSize: 12 },
-  miniPrecio: { fontFamily: 'Poppins_700Bold', fontSize: 15, marginTop: 2 },
-
-  footer: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    flexDirection: 'row', gap: 10,
-    paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1,
-  },
-  botonLlamar: {
-    width: 54, height: 54, borderRadius: 16, borderWidth: 1.5,
-    justifyContent: 'center', alignItems: 'center',
-  },
+  // Botones
+  filaBotones: { flexDirection: 'row', gap: 10, marginTop: 14 },
   botonWhats: {
-    flex: 1, flexDirection: 'row', gap: 8,
-    backgroundColor: '#25D366', borderRadius: 16, height: 54,
-    justifyContent: 'center', alignItems: 'center',
+    flex: 1,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: VERDE_WHATS,
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  botonWhatsTexto: { color: '#FFF', fontFamily: 'Poppins_700Bold', fontSize: 14 },
+  textoWhats: { fontFamily: 'Poppins_700Bold', fontSize: 14, color: '#FFFFFF' },
+  botonDetalle: {
+    width: 76,
+    height: 48,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  textoDetalle: { fontFamily: 'Poppins_700Bold', fontSize: 14 },
+  botonLlamar: {
+    flex: 1,
+    height: 48,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  textoLlamar: { fontFamily: 'Poppins_700Bold', fontSize: 14 },
 
-  noEncontrado: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8, padding: 32 },
-  noEncontradoTexto: { fontFamily: 'Poppins_600SemiBold', fontSize: 16, textAlign: 'center' },
-  volverTexto: { color: '#F5A623', fontFamily: 'Poppins_600SemiBold', fontSize: 14, marginTop: 8 },
+  // Secciones
+  seccionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  seccionTitulo: { fontFamily: 'Poppins_700Bold', fontSize: 13, letterSpacing: 1 },
+  lineaAmarilla: {
+    flex: 1,
+    height: 2,
+    backgroundColor: NARANJA,
+    marginLeft: 10,
+    borderRadius: 2,
+  },
+
+  // Tarjetas normales
+  tarjeta: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    marginBottom: 14,
+  },
+  foto: { width: '100%', aspectRatio: PROPORCION_FOTO, backgroundColor: '#1A1612' },
+  infoTarjeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    gap: 12,
+  },
+  columnaTexto: { flex: 1 },
+  nombre: { fontFamily: 'Poppins_700Bold', fontSize: 16 },
+  descripcion: { fontFamily: 'Poppins_400Regular', fontSize: 12, lineHeight: 17, marginTop: 2 },
+  precio: { fontFamily: 'Poppins_700Bold', fontSize: 22, marginTop: 4 },
+  moneda: { fontFamily: 'Poppins_600SemiBold', fontSize: 11 },
+  botonWhatsRedondo: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: VERDE_WHATS,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Cómo pedir
+  cajaPasos: { borderRadius: 20, padding: 16 },
+  paso: { flexDirection: 'row', gap: 12 },
+  columnaNumero: { alignItems: 'center', width: 30 },
+  numero: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: NARANJA,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  textoNumero: { fontFamily: 'Poppins_700Bold', fontSize: 14, color: '#1A1A1A' },
+  lineaPaso: { width: 2, flex: 1, minHeight: 14, marginVertical: 4, borderRadius: 1 },
+  textoPaso: { flex: 1, paddingBottom: 14 },
+  tituloPaso: { fontFamily: 'Poppins_700Bold', fontSize: 14, lineHeight: 20, marginTop: 4 },
+  detallePaso: { fontFamily: 'Poppins_400Regular', fontSize: 12, lineHeight: 17 },
+
+  vacio: {
+    fontFamily: 'Poppins_400Regular',
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 32,
+  },
 });

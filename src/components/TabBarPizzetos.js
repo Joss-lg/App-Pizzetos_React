@@ -23,13 +23,39 @@ const ETIQUETAS = {
   Notificaciones: 'Avisos',
 };
 
+const ES_ANDROID = Platform.OS === 'android';
+
 const TIENE_LIQUID_GLASS =
   Platform.OS === 'ios' && isGlassEffectAPIAvailable() && isLiquidGlassAvailable();
 
 const PADDING = 6;
 
-// Modo claro: Liquid Glass real. Modo oscuro: vidrio esmerilado que no apaga los colores.
+// Colores del fondo sólido que se usa en Android
+const FONDO_ANDROID_CLARO = 'rgba(255,255,255,0.96)';
+const FONDO_ANDROID_OSCURO = 'rgba(32,32,32,0.96)';
+
+// iPhone modo claro: Liquid Glass real.
+// iPhone modo oscuro: vidrio esmerilado que no apaga los colores.
+// Android: fondo sólido casi opaco (el difuminado de Android no es confiable
+// y en modo claro hacía que la barra desapareciera).
 function FondoVidrio({ modoOscuro, style, children }) {
+  if (ES_ANDROID) {
+    return (
+      <View
+        style={[
+          style,
+          {
+            backgroundColor: modoOscuro ? FONDO_ANDROID_OSCURO : FONDO_ANDROID_CLARO,
+            borderWidth: 1,
+            borderColor: modoOscuro ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)',
+          },
+        ]}
+      >
+        {children}
+      </View>
+    );
+  }
+
   if (TIENE_LIQUID_GLASS && !modoOscuro) {
     return (
       <GlassView
@@ -69,6 +95,11 @@ function Indicador({ modoOscuro }) {
       style={[
         styles.indicadorRelleno,
         styles.indicadorVidrio,
+        // En Android el fondo es blanco sólido: la cápsula necesita más color para verse
+        ES_ANDROID && !modoOscuro && {
+          backgroundColor: 'rgba(245,166,35,0.45)',
+          borderColor: 'rgba(245,166,35,0.35)',
+        },
         modoOscuro && {
           backgroundColor: 'rgba(245,166,35,0.9)',
           borderColor: 'rgba(255,255,255,0.25)',
@@ -143,7 +174,10 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
   // Contraste para que se lea sobre las fotos
   const colorInactivo = modoOscuro ? '#D6D6D6' : '#3A3A3A';
   // Halo detrás del texto: claro en modo claro, oscuro en modo oscuro
-  const colorHalo = modoOscuro ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)';
+  // (en Android el fondo ya es sólido, no hace falta halo)
+  const colorHalo = ES_ANDROID
+    ? 'transparent'
+    : modoOscuro ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)';
 
   return (
     <View
@@ -151,7 +185,15 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
       style={[styles.wrapper, { bottom: Math.max(insets.bottom - 6, 10) }]}
     >
       <View
-        style={[styles.sombra, modoOscuro && styles.sombraOscura]}
+        style={[
+          styles.sombra,
+          modoOscuro && styles.sombraOscura,
+          // En Android la sombra (elevation) solo se dibuja si el elemento tiene fondo
+          ES_ANDROID && {
+            backgroundColor: modoOscuro ? FONDO_ANDROID_OSCURO : FONDO_ANDROID_CLARO,
+            elevation: 8,
+          },
+        ]}
         onLayout={(e) => {
           const ancho = e.nativeEvent.layout.width;
           setAnchoItem((ancho - PADDING * 2) / total);

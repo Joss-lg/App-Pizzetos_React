@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { useTema } from '../context/ThemeContext';
 import { useFavoritos } from '../context/FavoritosContext';
 import { useDatos } from '../context/DatosContext';
@@ -13,9 +14,15 @@ import HeroBanner from '../components/HeroBanner';
 import PromoCard from '../components/PromoCard';
 import FiltrosCategorias from '../components/FiltrosCategorias';
 import ProductCard from '../components/ProductCard';
+import TarjetaTamano from '../components/TarjetaTamano';
+import AlertaPaquetes from '../components/AlertaPaquetes';
+import { esPaqueteDePromos } from '../data/paquetes';
 import {
   IconoBuscar, IconoPin, IconoSol, IconoLuna, IconoCerrar,
 } from '../components/IconosUI';
+
+// Logo horizontal de Pizzeto's (LogoPizzetos.png de la página, ya reducido)
+const LOGO = require('../../assets/splash-logo.png');
 
 // Sugerencias que aparecen al tocar el buscador
 const SUGERENCIAS = ['Hawaiana', 'Pastor', 'Pepperoni', 'Alitas', 'Hamburguesa', 'Refresco'];
@@ -65,29 +72,40 @@ export default function HomeScreen() {
     setSubcategoria('Todas');
   };
 
+  // Al tocar "Ver paquete" en la alerta, lleva a la pestaña Promos
+  const abrirPaqueteDeAlerta = () => {
+    navigation.navigate('Promos');
+  };
+
+  // Productos del Inicio: todo el menú MENOS los paquetes que solo van en Promos
+  const productosInicio = useMemo(
+    () => productos.filter((p) => !esPaqueteDePromos(p)),
+    [productos]
+  );
+
   const productosFiltrados = useMemo(() => {
     const palabras = normalizar(busqueda).split(/\s+/).filter(Boolean);
 
     // Favoritos siempre filtra por favoritos
     if (categoriaActiva === 'Favoritos') {
-      const favs = productos.filter((p) => favoritos.includes(p.id));
+      const favs = productosInicio.filter((p) => favoritos.includes(p.id));
       return palabras.length ? favs.filter((p) => coincide(p, palabras)) : favs;
     }
 
     // Si hay búsqueda, busca en todo el menú
     if (palabras.length) {
-      return productos.filter((p) => coincide(p, palabras));
+      return productosInicio.filter((p) => coincide(p, palabras));
     }
 
     // Sin búsqueda, aplica el filtro de categoría
-    if (categoriaActiva === 'Todos') return productos;
+    if (categoriaActiva === 'Todos') return productosInicio;
 
-    let lista = productos.filter((p) => p.categoria === categoriaActiva);
+    let lista = productosInicio.filter((p) => p.categoria === categoriaActiva);
     if (categoriaActiva === 'Pizzas' && subcategoria !== 'Todas') {
       lista = lista.filter((p) => p.subcategoria === subcategoria);
     }
     return lista;
-  }, [categoriaActiva, subcategoria, busqueda, favoritos, productos]);
+  }, [categoriaActiva, subcategoria, busqueda, favoritos, productosInicio]);
 
   const fondoBoton = modoOscuro ? '#2A2A2A' : '#F2F2F2';
   const colorIconoSuave = '#8A8A8A';
@@ -123,13 +141,21 @@ export default function HomeScreen() {
         {/* ── HEADER ── */}
         <View style={[styles.header, { backgroundColor: tema.header }]}>
           <View style={styles.headerIzq}>
+            {/* Aro naranja delgado con el logo sobre fondo blanco */}
             <LinearGradient
               colors={['#FFC04D', '#F5A623', '#E0880A']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.logoCircle}
             >
-              <Text style={styles.logoLetra}>P's</Text>
+              <View style={styles.logoInterior}>
+                <Image
+                  source={LOGO}
+                  style={styles.logoImagen}
+                  contentFit="contain"
+                  accessibilityLabel="Logo de Pizzeto's"
+                />
+              </View>
             </LinearGradient>
             <View>
               <Text style={[styles.headerMarca, { color: tema.marcaTexto }]}>
@@ -273,19 +299,7 @@ export default function HomeScreen() {
               contentContainerStyle={styles.tamanosFila}
             >
               {tamanos.map((t, i) => (
-                <View key={t.id} style={[styles.tamanoCard, { backgroundColor: tema.card }]}>
-                  <View
-                    style={[
-                      styles.tamanoCirculo,
-                      { width: 22 + i * 6, height: 22 + i * 6, borderRadius: (22 + i * 6) / 2 },
-                    ]}
-                  />
-                  <Text style={[styles.tamanoNombre, { color: tema.texto }]}>{t.nombre}</Text>
-                  <Text style={[styles.tamanoRebanadas, { color: tema.textoSecundario }]}>
-                    {t.rebanadas} rebanadas
-                  </Text>
-                  <Text style={[styles.tamanoPrecio, { color: tema.precio }]}>${t.precio}</Text>
-                </View>
+                <TarjetaTamano key={t.id} tamano={t} nivel={i} />
               ))}
             </ScrollView>
             <Text style={[styles.notaTamanos, { color: tema.textoSoloInfo }]}>
@@ -364,6 +378,9 @@ export default function HomeScreen() {
         {/* Espacio para que la barra flotante no tape el último producto */}
         <View style={{ height: 110 }} />
       </ScrollView>
+
+      {/* ── ALERTA DE PAQUETES (sale una vez al abrir la app) ── */}
+      <AlertaPaquetes oscuro={modoOscuro} onVerPaquete={abrirPaqueteDeAlerta} />
     </SafeAreaView>
   );
 }
@@ -385,25 +402,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
+
+  // Logo: aro naranja delgado, interior blanco y el logo completo adentro
   logoCircle: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    padding: 2,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.6)',
     shadowColor: '#F5A623',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.3,
     shadowRadius: 6,
     elevation: 4,
   },
-  logoLetra: {
-    color: '#1A1A1A',
-    fontFamily: 'Poppins_700Bold',
-    fontSize: 14,
+  logoInterior: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 5,
   },
+  logoImagen: {
+    width: '100%',
+    height: '100%',
+  },
+
   headerMarca: {
     fontFamily: 'Poppins_700Bold',
     fontSize: 17,
@@ -529,37 +557,7 @@ const styles = StyleSheet.create({
   tamanosFila: {
     gap: 10,
     paddingTop: 10,
-    paddingBottom: 4,
-  },
-  tamanoCard: {
-    width: 104,
-    borderRadius: 16,
-    paddingVertical: 14,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  tamanoCirculo: {
-    backgroundColor: 'rgba(245,166,35,0.2)',
-    borderWidth: 2,
-    borderColor: '#F5A623',
-    marginBottom: 8,
-  },
-  tamanoNombre: {
-    fontFamily: 'Poppins_700Bold',
-    fontSize: 13,
-  },
-  tamanoRebanadas: {
-    fontFamily: 'Poppins_400Regular',
-    fontSize: 10,
-  },
-  tamanoPrecio: {
-    fontFamily: 'Poppins_700Bold',
-    fontSize: 17,
-    marginTop: 4,
+    paddingBottom: 8,
   },
   notaTamanos: {
     fontFamily: 'Poppins_400Regular',
@@ -603,4 +601,4 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     textAlign: 'center',
   },
-});
+});                                                                                                         

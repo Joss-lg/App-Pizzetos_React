@@ -1,9 +1,11 @@
+import { useMemo } from 'react';
 import { ScrollView, Pressable, Text, View, StyleSheet } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Path, Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { useTema } from '../context/ThemeContext';
 import { useFavoritos } from '../context/FavoritosContext';
 import { useDatos } from '../context/DatosContext';
+import { esPaqueteDePromos } from '../data/paquetes';
 
 const trazo = (color) => ({
   stroke: color,
@@ -25,6 +27,18 @@ function IconoFavoritos({ color }) {
   return (
     <Svg width={16} height={16} viewBox="0 0 24 24">
       <Path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z" {...trazo(color)} />
+    </Svg>
+  );
+}
+
+// Rebanada de pizza: orilla arriba y punta hacia abajo
+function IconoPizzas({ color }) {
+  return (
+    <Svg width={16} height={16} viewBox="0 0 24 24">
+      <Path d="M3.5 7C9 4 15 4 20.5 7L12 21Z" {...trazo(color)} />
+      <Path d="M5.6 10.2c4.2-2 8.6-2 12.8 0" {...trazo(color)} />
+      <Circle cx="10.5" cy="13" r="1.1" {...trazo(color)} />
+      <Circle cx="13.6" cy="15.6" r="0.9" {...trazo(color)} />
     </Svg>
   );
 }
@@ -56,6 +70,7 @@ function IconoBebidas({ color }) {
 const categorias = [
   { nombre: 'Todos', Icono: IconoTodos },
   { nombre: 'Favoritos', Icono: IconoFavoritos },
+  { nombre: 'Pizzas', Icono: IconoPizzas },
   { nombre: 'Paquetes', Icono: IconoPaquetes },
   { nombre: 'Snacks', Icono: IconoSnacks },
   { nombre: 'Bebidas', Icono: IconoBebidas },
@@ -66,14 +81,20 @@ export default function FiltrosCategorias({ categoriaActiva, onSelect }) {
   const { favoritos } = useFavoritos();
   const { productos } = useDatos();
 
-  // Cuántos productos hay en cada categoría
+  // Productos que se ven en el Inicio (sin los paquetes que solo van en Promos)
+  const productosInicio = useMemo(
+    () => productos.filter((p) => !esPaqueteDePromos(p)),
+    [productos]
+  );
+
+  // Cuántos productos hay en cada categoría (contando solo los del Inicio)
   const contar = (nombre) => {
-    if (nombre === 'Todos') return productos.length;
+    if (nombre === 'Todos') return productosInicio.length;
     if (nombre === 'Favoritos') {
-      // Solo cuenta favoritos que sigan existiendo en el menú
-      return productos.filter((p) => favoritos.includes(p.id)).length;
+      // Solo cuenta favoritos que sigan existiendo en el menú del Inicio
+      return productosInicio.filter((p) => favoritos.includes(p.id)).length;
     }
-    return productos.filter((p) => p.categoria === nombre).length;
+    return productosInicio.filter((p) => p.categoria === nombre).length;
   };
 
   const seleccionar = (nombre) => {
@@ -111,6 +132,7 @@ export default function FiltrosCategorias({ categoriaActiva, onSelect }) {
             ]}
             accessibilityRole="button"
             accessibilityState={{ selected: activo }}
+            accessibilityLabel={`${nombre}, ${contar(nombre)} productos`}
           >
             <Icono color={colorIcono} />
             <Text style={[styles.texto, { color: colorTexto }]}>{nombre}</Text>
@@ -176,4 +198,4 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_700Bold',
     fontSize: 11,
   },
-});
+});      
