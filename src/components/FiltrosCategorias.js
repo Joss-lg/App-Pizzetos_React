@@ -1,4 +1,9 @@
-import { useMemo } from 'react';
+// src/components/FiltrosCategorias.js
+// Botones de filtro del Inicio (Todos, Favoritos, Pizzas, Paquetes, Snacks, Bebidas)
+// con su contador. Optimizado: los contadores se calculan una sola vez
+// y el componente solo se redibuja cuando algo cambia de verdad.
+
+import { memo, useMemo } from 'react';
 import { ScrollView, Pressable, Text, View, StyleSheet } from 'react-native';
 import Svg, { Path, Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
@@ -76,7 +81,7 @@ const categorias = [
   { nombre: 'Bebidas', Icono: IconoBebidas },
 ];
 
-export default function FiltrosCategorias({ categoriaActiva, onSelect }) {
+function FiltrosCategorias({ categoriaActiva, onSelect }) {
   const { tema, modoOscuro } = useTema();
   const { favoritos } = useFavoritos();
   const { productos } = useDatos();
@@ -87,15 +92,16 @@ export default function FiltrosCategorias({ categoriaActiva, onSelect }) {
     [productos]
   );
 
-  // Cuántos productos hay en cada categoría (contando solo los del Inicio)
-  const contar = (nombre) => {
-    if (nombre === 'Todos') return productosInicio.length;
-    if (nombre === 'Favoritos') {
+  // Cuántos productos hay en cada categoría (se calcula una sola vez)
+  const conteos = useMemo(() => {
+    const resultado = { Todos: productosInicio.length, Favoritos: 0 };
+    productosInicio.forEach((p) => {
+      resultado[p.categoria] = (resultado[p.categoria] || 0) + 1;
       // Solo cuenta favoritos que sigan existiendo en el menú del Inicio
-      return productosInicio.filter((p) => favoritos.includes(p.id)).length;
-    }
-    return productosInicio.filter((p) => p.categoria === nombre).length;
-  };
+      if (favoritos.includes(p.id)) resultado.Favoritos += 1;
+    });
+    return resultado;
+  }, [productosInicio, favoritos]);
 
   const seleccionar = (nombre) => {
     if (nombre === categoriaActiva) return;
@@ -111,6 +117,7 @@ export default function FiltrosCategorias({ categoriaActiva, onSelect }) {
     >
       {categorias.map(({ nombre, Icono }) => {
         const activo = categoriaActiva === nombre;
+        const total = conteos[nombre] ?? 0;
         const colorTexto = activo ? '#1A1A1A' : tema.texto;
         const colorIcono = activo
           ? '#1A1A1A'
@@ -132,7 +139,7 @@ export default function FiltrosCategorias({ categoriaActiva, onSelect }) {
             ]}
             accessibilityRole="button"
             accessibilityState={{ selected: activo }}
-            accessibilityLabel={`${nombre}, ${contar(nombre)} productos`}
+            accessibilityLabel={`${nombre}, ${total} productos`}
           >
             <Icono color={colorIcono} />
             <Text style={[styles.texto, { color: colorTexto }]}>{nombre}</Text>
@@ -147,7 +154,7 @@ export default function FiltrosCategorias({ categoriaActiva, onSelect }) {
               ]}
             >
               <Text style={[styles.contadorTexto, { color: activo ? '#1A1A1A' : tema.textoSecundario }]}>
-                {contar(nombre)}
+                {total}
               </Text>
             </View>
           </Pressable>
@@ -156,6 +163,9 @@ export default function FiltrosCategorias({ categoriaActiva, onSelect }) {
     </ScrollView>
   );
 }
+
+// Solo se redibuja si cambia el filtro activo (o favoritos, productos o tema)
+export default memo(FiltrosCategorias);
 
 const styles = StyleSheet.create({
   content: {
@@ -198,4 +208,4 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_700Bold',
     fontSize: 11,
   },
-});      
+});

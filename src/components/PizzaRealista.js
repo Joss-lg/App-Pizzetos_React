@@ -4,8 +4,10 @@
 // - Entre más grande el tamaño, más pepperonis.
 // - Animaciones: entra girando y creciendo, y luego gira muy despacio
 //   (como pizza en exhibición). Si el celular tiene "Reducir movimiento", no gira.
+// - Optimizado: el dibujo (unas 70 piezas) se hace una sola vez y no se
+//   vuelve a dibujar cuando cambia otra cosa en la pantalla.
 
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { Animated, Easing, AccessibilityInfo } from 'react-native';
 import Svg, {
   Circle, Defs, RadialGradient, Stop, Line, Ellipse, G, Path,
@@ -55,7 +57,87 @@ function Albahaca({ x, y, giro }) {
   );
 }
 
-export default function PizzaRealista({
+// El dibujo de la pizza: solo se vuelve a dibujar si cambia su tamaño o sus rebanadas
+const DibujoPizza = memo(function DibujoPizza({ size, rebanadas, nivel, clave }) {
+  const idMasa = `${clave}-masa`;
+  const idQueso = `${clave}-queso`;
+  const idPep = `${clave}-pep`;
+
+  const cantidad = CANTIDAD_POR_NIVEL[Math.min(Math.max(nivel, 0), 3)];
+  const cortes = Math.max(rebanadas || 8, 2);
+
+  return (
+    <Svg width={size} height={size} viewBox="0 0 100 100">
+      <Defs>
+        <RadialGradient id={idMasa} cx="50%" cy="50%" r="50%">
+          <Stop offset="0.8" stopColor="#EDC07A" />
+          <Stop offset="0.95" stopColor="#D1924A" />
+          <Stop offset="1" stopColor="#A96A2C" />
+        </RadialGradient>
+        <RadialGradient id={idQueso} cx="50%" cy="50%" r="50%">
+          <Stop offset="0" stopColor="#FFEFB5" />
+          <Stop offset="0.7" stopColor="#FAD06A" />
+          <Stop offset="1" stopColor="#EBB248" />
+        </RadialGradient>
+        <RadialGradient id={idPep} cx="40%" cy="40%" r="60%">
+          <Stop offset="0" stopColor="#E0553A" />
+          <Stop offset="1" stopColor="#A12D1D" />
+        </RadialGradient>
+      </Defs>
+
+      {/* Orilla de la masa */}
+      <Circle cx={CENTRO} cy={CENTRO} r={48} fill={`url(#${idMasa})`} />
+      <Circle cx={CENTRO} cy={CENTRO} r={48} fill="none" stroke="#9A5E24" strokeWidth={1} />
+      <Circle cx={CENTRO} cy={CENTRO} r={43.5} fill="none" stroke="#F4D08F" strokeWidth={1.2} opacity={0.5} />
+      {Array.from({ length: 9 }).map((_, k) => {
+        const p = polar(45.5, k * 40 + 12);
+        return <Circle key={`m${k}`} cx={p.x} cy={p.y} r={0.9} fill="#8C5320" opacity={0.35} />;
+      })}
+
+      {/* Salsa y queso */}
+      <Circle cx={CENTRO} cy={CENTRO} r={41.5} fill="#B83A22" />
+      <Circle cx={CENTRO} cy={CENTRO} r={40} fill={`url(#${idQueso})`} />
+      {BRILLOS.map(([r, a, radio], k) => {
+        const p = polar(r, a);
+        return <Circle key={`b${k}`} cx={p.x} cy={p.y} r={radio} fill="#FFF3C8" opacity={0.6} />;
+      })}
+      {DORADOS.map(([r, a, radio], k) => {
+        const p = polar(r, a);
+        return <Circle key={`d${k}`} cx={p.x} cy={p.y} r={radio} fill="#E3A13B" opacity={0.55} />;
+      })}
+
+      {/* Pepperonis */}
+      {PEPPERONIS.slice(0, cantidad).map(([r, a], k) => {
+        const p = polar(r, a);
+        return <Pepperoni key={`p${k}`} x={p.x} y={p.y} idGrad={idPep} />;
+      })}
+
+      {/* Albahaca */}
+      {HOJAS.map(([r, a, g], k) => {
+        const p = polar(r, a);
+        return <Albahaca key={`h${k}`} x={p.x} y={p.y} giro={g} />;
+      })}
+
+      {/* Cortes de las rebanadas */}
+      {Array.from({ length: cortes }).map((_, k) => {
+        const p = polar(41, (k * 360) / cortes - 90);
+        return (
+          <Line
+            key={`c${k}`}
+            x1={CENTRO}
+            y1={CENTRO}
+            x2={p.x}
+            y2={p.y}
+            stroke="rgba(110,55,15,0.35)"
+            strokeWidth={0.9}
+          />
+        );
+      })}
+    </Svg>
+  );
+});
+
+function PizzaRealista({
   size = 40,
   rebanadas = 8,
   nivel = 0,
@@ -109,13 +191,6 @@ export default function PizzaRealista({
     outputRange: ['0deg', '360deg'],
   });
 
-  const idMasa = `${clave}-masa`;
-  const idQueso = `${clave}-queso`;
-  const idPep = `${clave}-pep`;
-
-  const cantidad = CANTIDAD_POR_NIVEL[Math.min(Math.max(nivel, 0), 3)];
-  const cortes = Math.max(rebanadas || 8, 2);
-
   return (
     <Animated.View
       style={{
@@ -125,74 +200,11 @@ export default function PizzaRealista({
       }}
     >
       <Animated.View style={{ width: size, height: size, transform: [{ rotate: rotacionGiro }] }}>
-        <Svg width={size} height={size} viewBox="0 0 100 100">
-          <Defs>
-            <RadialGradient id={idMasa} cx="50%" cy="50%" r="50%">
-              <Stop offset="0.8" stopColor="#EDC07A" />
-              <Stop offset="0.95" stopColor="#D1924A" />
-              <Stop offset="1" stopColor="#A96A2C" />
-            </RadialGradient>
-            <RadialGradient id={idQueso} cx="50%" cy="50%" r="50%">
-              <Stop offset="0" stopColor="#FFEFB5" />
-              <Stop offset="0.7" stopColor="#FAD06A" />
-              <Stop offset="1" stopColor="#EBB248" />
-            </RadialGradient>
-            <RadialGradient id={idPep} cx="40%" cy="40%" r="60%">
-              <Stop offset="0" stopColor="#E0553A" />
-              <Stop offset="1" stopColor="#A12D1D" />
-            </RadialGradient>
-          </Defs>
-
-          {/* Orilla de la masa */}
-          <Circle cx={CENTRO} cy={CENTRO} r={48} fill={`url(#${idMasa})`} />
-          <Circle cx={CENTRO} cy={CENTRO} r={48} fill="none" stroke="#9A5E24" strokeWidth={1} />
-          <Circle cx={CENTRO} cy={CENTRO} r={43.5} fill="none" stroke="#F4D08F" strokeWidth={1.2} opacity={0.5} />
-          {Array.from({ length: 9 }).map((_, k) => {
-            const p = polar(45.5, k * 40 + 12);
-            return <Circle key={`m${k}`} cx={p.x} cy={p.y} r={0.9} fill="#8C5320" opacity={0.35} />;
-          })}
-
-          {/* Salsa y queso */}
-          <Circle cx={CENTRO} cy={CENTRO} r={41.5} fill="#B83A22" />
-          <Circle cx={CENTRO} cy={CENTRO} r={40} fill={`url(#${idQueso})`} />
-          {BRILLOS.map(([r, a, radio], k) => {
-            const p = polar(r, a);
-            return <Circle key={`b${k}`} cx={p.x} cy={p.y} r={radio} fill="#FFF3C8" opacity={0.6} />;
-          })}
-          {DORADOS.map(([r, a, radio], k) => {
-            const p = polar(r, a);
-            return <Circle key={`d${k}`} cx={p.x} cy={p.y} r={radio} fill="#E3A13B" opacity={0.55} />;
-          })}
-
-          {/* Pepperonis */}
-          {PEPPERONIS.slice(0, cantidad).map(([r, a], k) => {
-            const p = polar(r, a);
-            return <Pepperoni key={`p${k}`} x={p.x} y={p.y} idGrad={idPep} />;
-          })}
-
-          {/* Albahaca */}
-          {HOJAS.map(([r, a, g], k) => {
-            const p = polar(r, a);
-            return <Albahaca key={`h${k}`} x={p.x} y={p.y} giro={g} />;
-          })}
-
-          {/* Cortes de las rebanadas */}
-          {Array.from({ length: cortes }).map((_, k) => {
-            const p = polar(41, (k * 360) / cortes - 90);
-            return (
-              <Line
-                key={`c${k}`}
-                x1={CENTRO}
-                y1={CENTRO}
-                x2={p.x}
-                y2={p.y}
-                stroke="rgba(110,55,15,0.35)"
-                strokeWidth={0.9}
-              />
-            );
-          })}
-        </Svg>
+        <DibujoPizza size={size} rebanadas={rebanadas} nivel={nivel} clave={clave} />
       </Animated.View>
     </Animated.View>
   );
 }
+
+// Solo se redibuja si cambian sus datos (tamaño, rebanadas, etc.)
+export default memo(PizzaRealista);

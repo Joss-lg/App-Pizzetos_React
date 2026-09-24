@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable,
   Dimensions, Animated, Easing,
@@ -6,6 +6,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useTema } from '../context/ThemeContext';
 import ImageBackground from './ImagenFondo';
@@ -26,7 +27,7 @@ const TIEMPO_VISTA_RAPIDA = 450;
 // Espera antes de abrir el detalle, para que la animación de la flecha se vea completa (ms)
 const ESPERA_NAVEGAR = 140;
 
-// Solo las primeras tarjetas hacen animación de entrada (las demás ni se ven al abrir)
+// Solo las primeras tarjetas visibles hacen animación de entrada
 const MAX_ANIMADAS = 6;
 
 // Margen lateral de la tarjeta (igual que styles.sombra.marginHorizontal)
@@ -102,52 +103,80 @@ function crearAnimaciones(animarEntrada) {
   };
 }
 
-export default function ProductCard({ producto, indice = 0 }) {
+// posicion: lugar de la tarjeta entre las que se ven (0, 1, 2...) o -1 si no se anima.
+// animarAl: cambia cada vez que cambias de filtro; cuando cambia, la tarjeta
+//           repite su animación de entrada (solo las primeras 6 visibles).
+function ProductCard({ producto, posicion = -1, animarAl = null }) {
   const { tema } = useTema();
   const navigation = useNavigation();
   const [vistaRapida, setVistaRapida] = useState(false);
+  // La Vista Rápida solo se crea la primera vez que se abre
+  const [vistaMontada, setVistaMontada] = useState(false);
 
   // Candado para que dos toques rápidos no abran el detalle dos veces
   const navegando = useRef(false);
   const temporizador = useRef(null);
 
-  const animarEntrada = indice < MAX_ANIMADAS;
+  const animarEntrada = animarAl != null && posicion >= 0 && posicion < MAX_ANIMADAS;
+  const posicionRef = useRef(posicion);
+  posicionRef.current = posicion;
+
   const anim = useRef(null);
   if (!anim.current) anim.current = crearAnimaciones(animarEntrada);
   const a = anim.current;
 
-  // ── Entrada escalonada (solo las primeras tarjetas) ──
+  // ── Entrada escalonada: al abrir la app y cada vez que cambias de filtro ──
   useEffect(() => {
-    if (animarEntrada) {
-      const retraso = indice * 80;
+    const pos = posicionRef.current;
+    const debeAnimar = animarAl != null && pos >= 0 && pos < MAX_ANIMADAS;
 
-      Animated.parallel([
-        Animated.timing(a.aparicion, {
-          toValue: 1,
-          duration: 700,
-          delay: retraso,
-          easing: SUAVE,
-          useNativeDriver: true,
-        }),
-        Animated.timing(a.revelado, {
-          toValue: 1,
-          duration: 1000,
-          delay: retraso,
-          easing: SUAVE,
-          useNativeDriver: true,
-        }),
-        Animated.timing(a.brillo, {
-          toValue: 1,
-          duration: 900,
-          delay: retraso + 400,
-          easing: Easing.inOut(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start();
+    a.aparicion.stopAnimation();
+    a.revelado.stopAnimation();
+    a.brillo.stopAnimation();
+
+    if (!debeAnimar) {
+      // Sin animación: la tarjeta queda visible y quieta
+      a.aparicion.setValue(1);
+      a.revelado.setValue(1);
+      a.brillo.setValue(1);
+      return undefined;
     }
 
-    return () => clearTimeout(temporizador.current);
-  }, []);
+    a.aparicion.setValue(0);
+    a.revelado.setValue(0);
+    a.brillo.setValue(0);
+
+    const retraso = pos * 80;
+    const entrada = Animated.parallel([
+      Animated.timing(a.aparicion, {
+        toValue: 1,
+        duration: 700,
+        delay: retraso,
+        easing: SUAVE,
+        useNativeDriver: true,
+      }),
+      Animated.timing(a.revelado, {
+        toValue: 1,
+        duration: 1000,
+        delay: retraso,
+        easing: SUAVE,
+        useNativeDriver: true,
+      }),
+      Animated.timing(a.brillo, {
+        toValue: 1,
+        duration: 900,
+        delay: retraso + 400,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]);
+    entrada.start();
+
+    return () => entrada.stop();
+  }, [animarAl]);
+
+  // Limpia el temporizador del detalle al quitar la tarjeta
+  useEffect(() => () => clearTimeout(temporizador.current), []);
 
   // ── Presionar: hundir, inclinar hacia el dedo, aro naranja, barra de progreso ──
   const presionar = (e) => {
@@ -183,6 +212,7 @@ export default function ProductCard({ producto, indice = 0 }) {
 
   const abrirVistaRapida = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    setVistaMontada(true);
     setVistaRapida(true);
   };
 
@@ -259,7 +289,7 @@ export default function ProductCard({ producto, indice = 0 }) {
               pointerEvents="none"
             />
 
-            {/* Destello de luz diagonal (solo al entrar) */}
+            {/* Destello de luz diagonal (solo en las tarjetas que hacen la entrada) */}
             {animarEntrada && (
               <Animated.View
                 pointerEvents="none"
@@ -274,9 +304,11 @@ export default function ProductCard({ producto, indice = 0 }) {
               </Animated.View>
             )}
 
+            {/* Etiqueta de oferta con ícono dibujado (sin emoji) */}
             {producto.oferta && (
               <View style={styles.badgeOferta}>
-                <Text style={styles.badgeOfertaTexto}>🔥 ¡OFERTA!</Text>
+                <Ionicons name="flame" size={11} color="#1A1A1A" />
+                <Text style={styles.badgeOfertaTexto}>¡OFERTA!</Text>
               </View>
             )}
 
@@ -339,15 +371,20 @@ export default function ProductCard({ producto, indice = 0 }) {
         <Animated.View pointerEvents="none" style={[styles.aro, { opacity: a.aro }]} />
       </Animated.View>
 
-      <VistaRapida
-        producto={producto}
-        visible={vistaRapida}
-        onCerrar={() => setVistaRapida(false)}
-        onVerDetalle={irADetalle}
-      />
+      {vistaMontada && (
+        <VistaRapida
+          producto={producto}
+          visible={vistaRapida}
+          onCerrar={() => setVistaRapida(false)}
+          onVerDetalle={irADetalle}
+        />
+      )}
     </>
   );
 }
+
+// Solo se redibuja si cambia el producto, su posición o el filtro que la anima
+export default memo(ProductCard);
 
 const styles = StyleSheet.create({
   sombra: {
@@ -390,6 +427,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 12,
     left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#F5A623',
     borderRadius: 20,
     paddingHorizontal: 10,

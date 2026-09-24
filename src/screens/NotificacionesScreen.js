@@ -3,13 +3,14 @@
 // - Si el usuario no dio permiso, un aviso para activar las notificaciones.
 // - Avisos agrupados por día (Hoy, Ayer, Esta semana), con miniatura del producto sin recortes.
 // - Estado vacío con mensaje claro.
+// - Al tocar otra vez "Avisos" en la barra de abajo, sube hasta arriba.
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, Pressable, Linking, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, useScrollToTop } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useTema } from '../context/ThemeContext';
@@ -149,6 +150,10 @@ export default function NotificacionesScreen() {
   const [permiso, setPermiso] = useState('si');
   const [refrescando, setRefrescando] = useState(false);
 
+  // Al tocar otra vez "Avisos" en la barra de abajo, sube hasta arriba
+  const scrollRef = useRef(null);
+  useScrollToTop(scrollRef);
+
   const revisarEstado = useCallback(async () => {
     refrescarRecordatorios();
     const estado = await estadoPermiso().catch(() => 'no');
@@ -196,6 +201,7 @@ export default function NotificacionesScreen() {
   return (
     <SafeAreaView edges={['top']} style={[styles.safeArea, { backgroundColor: tema.fondo }]}>
       <ScrollView
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
         refreshControl={

@@ -1,16 +1,26 @@
+// src/components/VistaRapida.js
+// Vista rápida de un producto (se abre al mantener presionada una tarjeta).
+// - Foto completa con su forma real, favorito, nombre, descripción y precio.
+// - Botones: Ver detalle, WhatsApp y Compartir.
+// - iPhone: fondo difuminado. Android: fondo oscuro semitransparente
+//   (el difuminado de Android no es confiable).
+
 import { useEffect, useRef, useState } from 'react';
 import {
   Modal, View, Text, StyleSheet, Pressable, Animated,
-  Share, Linking, Alert, useWindowDimensions,
+  Share, Linking, Alert, Platform, useWindowDimensions,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import Svg, { Path } from 'react-native-svg';
+import { Ionicons } from '@expo/vector-icons';
 import { useTema } from '../context/ThemeContext';
 import { useDatos } from '../context/DatosContext';
 import BotonFavorito from './BotonFavorito';
 import { IconoChat } from './IconosUI';
+
+const ES_ANDROID = Platform.OS === 'android';
 
 // Forma inicial mientras carga la foto (las fotos de la página son horizontales)
 const PROPORCION_INICIAL = 1.9;
@@ -51,7 +61,8 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
 
   const textoPrecio = `${producto.precioDesde ? 'desde ' : ''}$${producto.precio}`;
 
-  // Animación de apertura: crece con resorte y aparece el fondo difuminado
+  // Animación de apertura: crece con resorte y aparece el fondo
+  // (también corre la primera vez, cuando la vista se crea ya abierta)
   useEffect(() => {
     if (!visible) return;
     escala.setValue(0.85);
@@ -83,6 +94,7 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
     });
   };
 
+  // Texto del mensaje que se comparte (los emojis aquí son parte del mensaje, no íconos de la app)
   const compartir = () => {
     const telefono = sucursal.telefonoFormato || sucursal.telefono;
     Share.share({
@@ -103,10 +115,18 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={() => cerrar()}>
-      {/* Fondo difuminado: tocarlo cierra */}
+      {/* Fondo: tocarlo cierra */}
       <Animated.View style={[StyleSheet.absoluteFill, { opacity: opacidad }]}>
-        <BlurView intensity={40} tint={modoOscuro ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} />
+        {ES_ANDROID ? (
+          // Android: fondo oscuro parejo (sin difuminado)
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]} />
+        ) : (
+          // iPhone: difuminado + capa oscura suave
+          <>
+            <BlurView intensity={40} tint={modoOscuro ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} />
+          </>
+        )}
         <Pressable style={StyleSheet.absoluteFill} onPress={() => cerrar()} accessibilityLabel="Cerrar vista rápida" />
       </Animated.View>
 
@@ -139,11 +159,15 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
               pointerEvents="none"
             />
             <BotonFavorito id={producto.id} size={40} style={styles.favorito} />
+
+            {/* Etiqueta de oferta con ícono dibujado (sin emoji) */}
             {producto.oferta && (
               <View style={styles.badgeOferta}>
-                <Text style={styles.badgeOfertaTexto}>🔥 ¡OFERTA!</Text>
+                <Ionicons name="flame" size={11} color="#1A1A1A" />
+                <Text style={styles.badgeOfertaTexto}>¡OFERTA!</Text>
               </View>
             )}
+
             <View style={styles.textoImagen}>
               <Text style={styles.categoria}>
                 {producto.subcategoria
@@ -172,12 +196,14 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
               <Pressable
                 style={({ pressed }) => [styles.botonPrincipal, pressed && { opacity: 0.85 }]}
                 onPress={() => cerrar(onVerDetalle)}
+                accessibilityRole="button"
               >
                 <Text style={styles.botonPrincipalTexto}>Ver detalle</Text>
               </Pressable>
               <Pressable
                 style={({ pressed }) => [styles.botonCirculo, { backgroundColor: '#25D366' }, pressed && { opacity: 0.8 }]}
                 onPress={whatsapp}
+                accessibilityRole="button"
                 accessibilityLabel="Preguntar por WhatsApp"
               >
                 <IconoChat color="#FFFFFF" size={21} />
@@ -185,6 +211,7 @@ export default function VistaRapida({ producto, visible, onCerrar, onVerDetalle 
               <Pressable
                 style={({ pressed }) => [styles.botonCirculo, { backgroundColor: fondoBotonSecundario }, pressed && { opacity: 0.8 }]}
                 onPress={compartir}
+                accessibilityRole="button"
                 accessibilityLabel="Compartir"
               >
                 <IconoCompartir color={tema.texto} />
@@ -225,6 +252,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 16,
     left: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#F5A623',
     borderRadius: 20,
     paddingHorizontal: 10,

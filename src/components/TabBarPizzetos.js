@@ -1,5 +1,15 @@
+// src/components/TabBarPizzetos.js
+// Barra de pestañas flotante de Pizzeto's.
+// - iPhone: Liquid Glass en claro y vidrio esmerilado en oscuro. Android: fondo sólido.
+// - Cápsula naranja que se desliza con rebote al cambiar de pestaña.
+// - Desliza el dedo sobre la barra y la cápsula te sigue como una lupa
+//   (como en WhatsApp); al soltar, abre la pestaña donde levantaste el dedo.
+//   En iPhone brilla como cristal; en Android se pone de un naranja más intenso.
+
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Animated, Platform } from 'react-native';
+import {
+  View, Text, Pressable, StyleSheet, Animated, Platform, PanResponder,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassView, isLiquidGlassAvailable, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import { BlurView } from 'expo-blur';
@@ -30,9 +40,26 @@ const TIENE_LIQUID_GLASS =
 
 const PADDING = 6;
 
+// Efecto lupa al arrastrar: crece a lo ancho y casi nada a lo alto
+// (si crece mucho de alto, la orilla de la barra la recorta)
+const LUPA_ANCHO = 1.14;
+const LUPA_ALTO = 1.04;
+
 // Colores del fondo sólido que se usa en Android
 const FONDO_ANDROID_CLARO = 'rgba(255,255,255,0.96)';
 const FONDO_ANDROID_OSCURO = 'rgba(32,32,32,0.96)';
+
+const limitar = (valor, min, max) => Math.max(min, Math.min(max, valor));
+
+// Vibración suave al pasar de una pestaña a otra mientras arrastras
+function vibrarCambio() {
+  if (ES_ANDROID) {
+    // En algunos Android la vibración de "selección" es muy fuerte o no se siente
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+  } else {
+    Haptics.selectionAsync().catch(() => {});
+  }
+}
 
 // iPhone modo claro: Liquid Glass real.
 // iPhone modo oscuro: vidrio esmerilado que no apaga los colores.
@@ -120,12 +147,20 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
   const { modoOscuro } = useTema();
   const insets = useSafeAreaInsets();
   const [anchoItem, setAnchoItem] = useState(0);
+  // Pestaña bajo el dedo mientras deslizas (null = no estás deslizando)
+  const [indiceDedo, setIndiceDedo] = useState(null);
 
   // Valores animados que NO se recrean nunca
   const posicionX = useRef(new Animated.Value(0)).current;
   const escalaX = useRef(new Animated.Value(1)).current;
   const escalaY = useRef(new Animated.Value(1)).current;
+  const lupa = useRef(new Animated.Value(0)).current; // 0 = normal, 1 = arrastrando
   const indiceAnimado = useRef(state.index);
+
+  // Para saber dónde está la barra en la pantalla (y poner la cápsula bajo el dedo)
+  const barraRef = useRef(null);
+  const barraX = useRef(0);
+  const dedoRef = useRef(null);
 
   const total = state.routes.length;
 
@@ -161,6 +196,98 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
     ]).start();
   };
 
+  // Abre una pestaña (igual que tocarla)
+  const irAPestana = (indice) => {
+    const route = state.routes[indice];
+    if (!route) return;
+    const enfocado = state.index === indice;
+    const evento = navigation.emit({
+      type: 'tabPress',
+      target: route.key,
+      canPreventDefault: true,
+    });
+    if (!enfocado && !evento.defaultPrevented) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      animarA(indice); // la animación arranca al instante del toque
+      navigation.navigate(route.name);
+    } else {
+      animarA(state.index); // regresa la cápsula a su lugar
+    }
+  };
+
+  // Lo más nuevo, para usarlo dentro del gesto (que se crea una sola vez)
+  const ultimo = useRef({});
+  ultimo.current = { anchoItem, total, irAPestana, indiceActual: state.index };
+
+  // Dónde poner la cápsula para que quede centrada bajo el dedo
+  const posicionDesdeDedo = (pageX) => {
+    const { anchoItem: ancho, total: n } = ultimo.current;
+    if (!ancho) return 0;
+    return limitar(pageX - barraX.current - PADDING - ancho / 2, 0, (n - 1) * ancho);
+  };
+
+  // Marca la pestaña bajo el dedo (con vibración suave al cambiar)
+  const marcarPestana = (posicion) => {
+    const { anchoItem: ancho } = ultimo.current;
+    if (!ancho) return;
+    const indice = Math.round(posicion / ancho);
+    if (indice !== dedoRef.current) {
+      dedoRef.current = indice;
+      setIndiceDedo(indice);
+      vibrarCambio();
+    }
+  };
+
+  const terminarArrastre = () => {
+    const indice = dedoRef.current ?? ultimo.current.indiceActual;
+    dedoRef.current = null;
+    setIndiceDedo(null);
+    Animated.spring(lupa, { toValue: 0, speed: 14, bounciness: 6, useNativeDriver: false }).start();
+    ultimo.current.irAPestana(indice);
+  };
+
+  // ── Gesto de deslizar el dedo sobre la barra ──
+  const gestos = useRef(
+    PanResponder.create({
+      // Un toque normal lo manejan los botones; solo se activa al deslizar de lado
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponderCapture: (_, g) =>
+        Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
+      onPanResponderTerminationRequest: () => false,
+
+      onPanResponderGrant: (_, g) => {
+        // Por si la barra se movió (rotación, etc.), vuelve a medir su posición
+        barraRef.current?.measureInWindow((x) => {
+          if (typeof x === 'number') barraX.current = x;
+        });
+
+        posicionX.stopAnimation();
+        escalaX.stopAnimation();
+        escalaY.stopAnimation();
+
+        const destino = posicionDesdeDedo(g.x0 + g.dx);
+        marcarPestana(destino);
+
+        // La cápsula salta bajo el dedo y crece como lupa
+        Animated.parallel([
+          Animated.spring(posicionX, { toValue: destino, speed: 30, bounciness: 4, useNativeDriver: false }),
+          Animated.spring(escalaX, { toValue: LUPA_ANCHO, speed: 20, bounciness: 8, useNativeDriver: false }),
+          Animated.spring(escalaY, { toValue: LUPA_ALTO, speed: 20, bounciness: 8, useNativeDriver: false }),
+          Animated.spring(lupa, { toValue: 1, speed: 20, bounciness: 4, useNativeDriver: false }),
+        ]).start();
+      },
+
+      onPanResponderMove: (_, g) => {
+        const destino = posicionDesdeDedo(g.moveX);
+        posicionX.setValue(destino);
+        marcarPestana(destino);
+      },
+
+      onPanResponderRelease: terminarArrastre,
+      onPanResponderTerminate: terminarArrastre,
+    })
+  ).current;
+
   // Al medir la barra por primera vez, coloca la cápsula sin animar
   useEffect(() => {
     if (anchoItem) posicionX.setValue(state.index * anchoItem);
@@ -179,12 +306,23 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
     ? 'transparent'
     : modoOscuro ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)';
 
+  // Efecto al arrastrar:
+  // iPhone → brillo blanco de cristal. Android → naranja más intenso (se ve "presionado").
+  const colorLupa = ES_ANDROID ? '#F5A623' : '#FFFFFF';
+  let opacidadLupa;
+  if (ES_ANDROID) opacidadLupa = modoOscuro ? 0.1 : 0.35;
+  else opacidadLupa = modoOscuro ? 0.18 : 0.3;
+
+  // Mientras deslizas, se marca la pestaña bajo el dedo; si no, la actual
+  const indiceVisual = indiceDedo ?? state.index;
+
   return (
     <View
       pointerEvents="box-none"
       style={[styles.wrapper, { bottom: Math.max(insets.bottom - 6, 10) }]}
     >
       <View
+        ref={barraRef}
         style={[
           styles.sombra,
           modoOscuro && styles.sombraOscura,
@@ -197,7 +335,11 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
         onLayout={(e) => {
           const ancho = e.nativeEvent.layout.width;
           setAnchoItem((ancho - PADDING * 2) / total);
+          barraRef.current?.measureInWindow((x) => {
+            if (typeof x === 'number') barraX.current = x;
+          });
         }}
+        {...gestos.panHandlers}
       >
         <FondoVidrio modoOscuro={modoOscuro} style={styles.barra}>
           {anchoItem > 0 && (
@@ -216,40 +358,41 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
               ]}
             >
               <Indicador modoOscuro={modoOscuro} />
+              {/* Efecto extra mientras arrastras (cristal en iPhone, naranja intenso en Android) */}
+              <Animated.View
+                style={[
+                  styles.brilloLupa,
+                  {
+                    backgroundColor: colorLupa,
+                    opacity: lupa.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, opacidadLupa],
+                    }),
+                  },
+                ]}
+              />
             </Animated.View>
           )}
 
           {state.routes.map((route, index) => {
             const enfocado = state.index === index;
+            const marcado = indiceVisual === index;
             const { options } = descriptors[route.key];
             const Icono = ICONOS[route.name];
             const badge = options.tabBarBadge;
-            const color = enfocado ? '#1A1A1A' : colorInactivo;
-
-            const alPresionar = () => {
-              const evento = navigation.emit({
-                type: 'tabPress',
-                target: route.key,
-                canPreventDefault: true,
-              });
-              if (!enfocado && !evento.defaultPrevented) {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-                animarA(index); // la animación arranca al instante del toque
-                navigation.navigate(route.name);
-              }
-            };
+            const color = marcado ? '#1A1A1A' : colorInactivo;
 
             return (
               <Pressable
                 key={route.key}
-                onPress={alPresionar}
+                onPress={() => irAPestana(index)}
                 style={styles.item}
                 accessibilityRole="button"
                 accessibilityState={enfocado ? { selected: true } : {}}
                 accessibilityLabel={ETIQUETAS[route.name]}
               >
                 <View>
-                  <Icono color={color} activo={enfocado} />
+                  <Icono color={color} activo={marcado} />
                   {badge !== undefined && !enfocado && (
                     <View style={styles.badge}>
                       <Text style={styles.badgeTexto}>{badge}</Text>
@@ -261,9 +404,9 @@ export default function TabBarPizzetos({ state, descriptors, navigation }) {
                     styles.etiqueta,
                     {
                       color,
-                      fontFamily: enfocado ? 'Poppins_700Bold' : 'Poppins_600SemiBold',
-                      // Sin halo en la pestaña activa: sobre el naranja no hace falta
-                      textShadowColor: enfocado ? 'transparent' : colorHalo,
+                      fontFamily: marcado ? 'Poppins_700Bold' : 'Poppins_600SemiBold',
+                      // Sin halo en la pestaña marcada: sobre el naranja no hace falta
+                      textShadowColor: marcado ? 'transparent' : colorHalo,
                     },
                   ]}
                   numberOfLines={1}
@@ -332,6 +475,10 @@ const styles = StyleSheet.create({
     height: '42%',
     borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  brilloLupa: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 28,
   },
   item: {
     flex: 1,

@@ -7,9 +7,11 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.pizzetos.app"
     },
     "android": {
+      "package": "com.pizzetos.app",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png"
@@ -29,7 +31,19 @@
           "resizeMode": "contain",
           "backgroundColor": "#FFFFFF"
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#F5A623"
+        }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c129119d-9daa-4ed0-b77d-06e430498c51"
+      }
+    }
   }
 }

@@ -1,16 +1,17 @@
 // src/screens/PromocionesScreen.js
 // Pestaña "Promos": SOLO Paquete 1, 2, 3 y Promo Magno.
-// - Arriba: el paquete en oferta como tarjeta grande destacada.
+// - Arriba: un paquete destacado que CAMBIA CADA DÍA (1 → 2 → 3 → Magno → 1...).
 // - Luego: los demás paquetes, cada uno con botón directo a WhatsApp.
 // - Al final: cómo pedir en 3 pasos + botones de llamar y WhatsApp.
+// - Al tocar otra vez "Promos" en la barra de abajo, sube hasta arriba.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, Pressable,
-  RefreshControl, Linking, Alert, Animated,
+  RefreshControl, Linking, Alert, Animated, AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useScrollToTop, useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { useTema } from '../context/ThemeContext';
@@ -23,6 +24,11 @@ const NARANJA = '#F5A623';
 const VERDE_WHATS = '#25D366';
 const PROPORCION_FOTO = 16 / 9; // las fotos de los paquetes son horizontales
 
+// ---------- Ajuste para probar (déjalo en 0) ----------
+// Cambia a 1, 2 o 3 para ver qué paquete saldría mañana, pasado, etc.
+// IMPORTANTE: regrésalo a 0 cuando termines de probar.
+const DIAS_DE_PRUEBA = 0;
+
 const PASOS = [
   { titulo: 'Elige tu paquete', texto: 'Revisa qué incluye cada uno.' },
   { titulo: 'Escríbenos o llama', texto: 'Por WhatsApp o por teléfono.' },
@@ -33,6 +39,15 @@ function formatoPrecio(valor) {
   const n = Number(valor);
   if (isNaN(n)) return '';
   return '$' + n.toFixed(Number.isInteger(n) ? 0 : 2);
+}
+
+// Número del día de hoy (cambia a medianoche, hora del teléfono)
+function numeroDeHoy() {
+  const hoy = new Date();
+  return (
+    Math.floor(Date.UTC(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()) / 86400000) +
+    DIAS_DE_PRUEBA
+  );
 }
 
 // ¿La sucursal está abierta ahorita? (usa sucursal.horario, igual que la pantalla Sucursal)
@@ -50,9 +65,29 @@ export default function PromocionesScreen() {
   const { productos, sucursal, recargar } = useDatos();
   const navigation = useNavigation();
   const [refrescando, setRefrescando] = useState(false);
+  const [dia, setDia] = useState(numeroDeHoy);
+
+  // Al tocar otra vez "Promos" en la barra de abajo, sube hasta arriba
+  const scrollRef = useRef(null);
+  useScrollToTop(scrollRef);
 
   // Animación de entrada de la tarjeta destacada
   const entrada = useRef(new Animated.Value(0)).current;
+
+  // Revisa si ya cambió el día al entrar a la pestaña...
+  useFocusEffect(
+    useCallback(() => {
+      setDia(numeroDeHoy());
+    }, [])
+  );
+
+  // ...y al regresar a la app desde segundo plano
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (estado) => {
+      if (estado === 'active') setDia(numeroDeHoy());
+    });
+    return () => sub.remove();
+  }, []);
 
   // Solo los paquetes de Promos, en el orden 1, 2, 3, Magno
   const paquetes = useMemo(() => {
@@ -64,8 +99,9 @@ export default function PromocionesScreen() {
     return lista;
   }, [productos]);
 
-  // El destacado es el que está en oferta (si no hay, el primero)
-  const destacado = paquetes.find((p) => p.oferta) || paquetes[0];
+  // El destacado cambia cada día: 1 → 2 → 3 → Magno → 1...
+  const destacado =
+    paquetes.length > 0 ? paquetes[((dia % paquetes.length) + paquetes.length) % paquetes.length] : null;
   const resto = paquetes.filter((p) => p.id !== destacado?.id);
 
   useEffect(() => {
@@ -83,6 +119,7 @@ export default function PromocionesScreen() {
 
   const alRefrescar = async () => {
     setRefrescando(true);
+    setDia(numeroDeHoy());
     await recargar();
     setRefrescando(false);
   };
@@ -121,6 +158,7 @@ export default function PromocionesScreen() {
   return (
     <SafeAreaView edges={['top']} style={[styles.safeArea, { backgroundColor: tema.fondo }]}>
       <ScrollView
+        ref={scrollRef}
         style={{ backgroundColor: tema.fondo }}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -161,7 +199,7 @@ export default function PromocionesScreen() {
           </Text>
         ) : (
           <>
-            {/* ── DESTACADO ── */}
+            {/* ── DESTACADO DEL DÍA ── */}
             {destacado && (
               <Animated.View
                 style={[
@@ -205,7 +243,7 @@ export default function PromocionesScreen() {
                   <View style={styles.infoDestacada}>
                     <View style={styles.cintaDestacada}>
                       <Text style={styles.textoCinta}>
-                        {destacado.oferta ? 'Oferta' : 'Destacado'}
+                        {destacado.oferta ? 'Oferta' : 'Destacado de hoy'}
                       </Text>
                     </View>
 

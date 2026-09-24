@@ -51,7 +51,7 @@ const EMOJI = { Paquetes: '🍕', Pizzas: '🍕', Snacks: '🍟' };
 // Nombre que aparece arriba del mensaje en iPhone
 const MARCA = "Pizzeto's";
 const DIAS_A_PROGRAMAR = 10; // días hacia adelante que quedan programados
-const DIAS_EN_AVISOS = 7; // cuántos días atrás se muestran en Avisos
+const DIAS_EN_AVISOS = 7; // cuántos días atrás se guardan en el historial
 
 const CLAVE_LISTA = 'recordatorios:lista';
 const CANAL_ANDROID = 'avisos';
@@ -101,6 +101,14 @@ function formatoPrecio(valor) {
   return '$' + n.toFixed(Number.isInteger(n) ? 0 : 2);
 }
 
+// Evita que diga "pizza Pizza":
+// "Camarón"       → "pizza Camarón"
+// "Pizza Del Mar" → "Pizza Del Mar" (ya trae la palabra, no se repite)
+function nombreDePizza(nombre) {
+  const limpio = String(nombre || '').trim();
+  return /^pizza\b/i.test(limpio) ? limpio : `pizza ${limpio}`;
+}
+
 // Arma los mensajes posibles SOLO con productos reales
 function armarCandidatos(productos) {
   const paquetes = productos.filter((p) => p.categoria === 'Paquetes');
@@ -118,7 +126,7 @@ function armarCandidatos(productos) {
       : { pantalla: 'ProductoDetalle', id: p.id },
   });
   const dePizza = (p) => ({
-    mensaje: `Una pizza ${p.nombre} bien calientita, ${p.precioDesde ? 'desde ' : 'por '}${formatoPrecio(p.precio)}${emoji('Pizzas')} Toca para verla.`,
+    mensaje: `Una ${nombreDePizza(p.nombre)} bien calientita, ${p.precioDesde ? 'desde ' : 'por '}${formatoPrecio(p.precio)}${emoji('Pizzas')} Toca para verla.`,
     productoId: p.id,
     destino: { pantalla: 'ProductoDetalle', id: p.id },
   });

@@ -1,11 +1,18 @@
-import { useEffect, useRef } from 'react';
+// App.js
+// - Mantiene el splash (logo de Pizzeto's) hasta que las fuentes Poppins están listas
+//   y la primera pantalla ya se dibujó; luego lo quita (con desvanecido en la app instalada).
+// - Al tocar una notificación, abre la pantalla de su destino (también con la app cerrada).
+
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   NavigationContainer, DefaultTheme, DarkTheme, createNavigationContainerRef,
 } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts, Poppins_400Regular, Poppins_600SemiBold, Poppins_700Bold } from '@expo-google-fonts/poppins';
-import { View, ActivityIndicator } from 'react-native';
+import { View } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Notifications } from './src/lib/notificacionesSeguras';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -17,6 +24,24 @@ import {
 import { FavoritosProvider } from './src/context/FavoritosContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import { configurarNotificaciones } from './src/lib/recordatorios';
+
+// ¿La app corre dentro de Expo Go? (ahí no se puede personalizar el splash)
+const ES_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
+// El splash NO se quita solo: lo quitamos nosotros cuando todo esté listo
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Desvanecido suave al quitar el splash (solo en la app instalada, no en Expo Go)
+if (!ES_EXPO_GO) {
+  try {
+    SplashScreen.setOptions({ duration: 400, fade: true });
+  } catch {
+    // versiones que no lo soportan: se quita sin desvanecido
+  }
+}
+
+// Si las fuentes tardan más que esto, la app abre de todos modos
+const ESPERA_MAXIMA_FUENTES = 4000;
 
 // Cómo se muestran las notificaciones si llegan con la app abierta
 configurarNotificaciones();
@@ -31,12 +56,29 @@ function Root() {
 
   const destinoPendiente = useRef(null);
   const ultimaClave = useRef(null);
+  const splashQuitado = useRef(false);
 
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, errorFuentes] = useFonts({
     Poppins_400Regular,
     Poppins_600SemiBold,
     Poppins_700Bold,
   });
+
+  // Seguro: si las fuentes no cargan a tiempo, se sigue con la letra del teléfono
+  const [tiempoAgotado, setTiempoAgotado] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setTiempoAgotado(true), ESPERA_MAXIMA_FUENTES);
+    return () => clearTimeout(t);
+  }, []);
+
+  const listo = fontsLoaded || Boolean(errorFuentes) || tiempoAgotado;
+
+  // Quita el splash cuando la primera pantalla ya está dibujada (sin parpadeos)
+  const alDibujar = useCallback(() => {
+    if (!listo || splashQuitado.current) return;
+    splashQuitado.current = true;
+    SplashScreen.hideAsync().catch(() => {});
+  }, [listo]);
 
   // Qué hacer al tocar una notificación
   const atender = (respuesta) => {
@@ -106,21 +148,16 @@ function Root() {
     },
   };
 
-  if (!fontsLoaded) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: tema.fondo }}>
-        <ActivityIndicator color="#F5A623" />
-      </View>
-    );
-  }
+  // Mientras tanto no se dibuja nada: el splash con el logo sigue en pantalla
+  if (!listo) return null;
 
   return (
-    <>
+    <View style={{ flex: 1, backgroundColor: tema.fondo }} onLayout={alDibujar}>
       <StatusBar style={tema.statusBar} />
       <NavigationContainer ref={navegacionRef} theme={temaNavegacion} onReady={alEstarLista}>
         <AppNavigator />
       </NavigationContainer>
-    </>
+    </View>
   );
 }
 

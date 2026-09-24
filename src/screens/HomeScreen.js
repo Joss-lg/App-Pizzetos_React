@@ -1,12 +1,15 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback, useDeferredValue } from 'react';
 import {
   View, Text, ScrollView, StyleSheet,
   TouchableOpacity, TextInput, Pressable, RefreshControl,
+  Animated, Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation, useScrollToTop } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
+import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { useTema } from '../context/ThemeContext';
 import { useFavoritos } from '../context/FavoritosContext';
 import { useDatos } from '../context/DatosContext';
@@ -20,6 +23,15 @@ import { esPaqueteDePromos } from '../data/paquetes';
 import {
   IconoBuscar, IconoPin, IconoSol, IconoLuna, IconoCerrar,
 } from '../components/IconosUI';
+
+const NARANJA = '#F5A623';
+const ES_ANDROID = Platform.OS === 'android';
+
+// Cuántas tarjetas (las de arriba) repiten la animación al cambiar de filtro
+const TARJETAS_ANIMADAS = 6;
+
+// Detalle escondido: logo que aparece al seguir bajando cuando ya estás hasta abajo
+const JALON_PARA_VERLO = 80; // cuánto hay que jalar en iPhone para verlo completo
 
 // Logo horizontal de Pizzeto's (LogoPizzetos.png de la página, ya reducido)
 const LOGO = require('../../assets/splash-logo.png');
@@ -49,16 +61,99 @@ function coincide(producto, palabras) {
 export default function HomeScreen() {
   const { tema, modoOscuro, toggleTema } = useTema();
   const { favoritos } = useFavoritos();
-  const { productos, promociones, tamanos, recargar } = useDatos();
+  const {
+    productos, promociones, tamanos, recargar, error, cargando,
+  } = useDatos();
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const [categoriaActiva, setCategoriaActiva] = useState('Todos');
   const [subcategoria, setSubcategoria] = useState('Todas');
   const [busqueda, setBusqueda] = useState('');
   const [buscadorActivo, setBuscadorActivo] = useState(false);
   const [refrescando, setRefrescando] = useState(false);
 
-  const buscando = busqueda.trim().length > 0;
-  const viendoPizzas = categoriaActiva === 'Pizzas' && !buscando;
+  // Al tocar otra vez "Inicio" en la barra de abajo, sube hasta arriba
+  const scrollRef = useRef(null);
+  useScrollToTop(scrollRef);
+
+  // ── Detalle escondido: el logo al final ──
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const brinco = useRef(new Animated.Value(0)).current; // para Android
+  const medidas = useRef({ contenido: 0, visible: 0 });
+  const empezoAbajo = useRef(false);
+  const [maxScroll, setMaxScroll] = useState(0);
+
+  // Hasta dónde se puede bajar (alto del contenido menos lo que se ve)
+  const actualizarMax = () => {
+    const m = Math.max(0, Math.round(medidas.current.contenido - medidas.current.visible));
+    setMaxScroll((prev) => (prev === m ? prev : m));
+  };
+  const alCambiarContenido = (_, alto) => {
+    medidas.current.contenido = alto;
+    actualizarMax();
+  };
+  const alMedirLista = (e) => {
+    medidas.current.visible = e.nativeEvent.layout.height;
+    actualizarMax();
+  };
+
+  // Android: el logo salta, se queda un momento y se va
+  const mostrarBrinco = () => {
+    brinco.stopAnimation();
+    brinco.setValue(0);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    Animated.sequence([
+      Animated.spring(brinco, { toValue: 1, speed: 14, bounciness: 12, useNativeDriver: true }),
+      Animated.delay(1500),
+      Animated.timing(brinco, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const alEmpezarArrastre = (e) => {
+    empezoAbajo.current = maxScroll > 0 && e.nativeEvent.contentOffset.y >= maxScroll - 2;
+  };
+
+  const alTerminarArrastre = (e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    if (ES_ANDROID) {
+      // Ya estaba hasta abajo e intentó seguir bajando
+      if (empezoAbajo.current && y >= maxScroll - 2) mostrarBrinco();
+    } else if (y - maxScroll > JALON_PARA_VERLO * 0.7) {
+      // iPhone: jaló lo suficiente para ver el logo completo
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+  };
+
+  // iPhone: el logo aparece según qué tanto jalas; Android: con el brinco
+  const progresoLogo = ES_ANDROID
+    ? brinco
+    : scrollY.interpolate({
+        inputRange: [maxScroll + 10, maxScroll + JALON_PARA_VERLO],
+        outputRange: [0, 1],
+        extrapolate: 'clamp',
+      });
+
+  // ── Para que no haya lag ──
+  // Los botones (filtros, buscador) cambian AL INSTANTE con los valores normales.
+  // La lista de productos usa estas copias "diferidas", que se actualizan
+  // justo después, sin frenar el toque.
+  const categoriaLista = useDeferredValue(categoriaActiva);
+  const subcategoriaLista = useDeferredValue(subcategoria);
+  const busquedaLista = useDeferredValue(busqueda);
+
+  const buscando = busqueda.trim().length > 0; // para las sugerencias del buscador
+  const buscandoLista = busquedaLista.trim().length > 0; // para la lista
+  const viendoPizzas = categoriaLista === 'Pizzas' && !buscandoLista;
+  const mostrarBanner = !buscandoLista && categoriaLista === 'Todos';
+
+  // ── Sin internet ──
+  // Sin menú guardado: pantalla "Sin conexión". Con menú guardado: aviso pequeño arriba.
+  const sinConexion = Boolean(error) && !cargando;
+  const mostrarAvisoSinRed = sinConexion && productos.length > 0;
+
+  // Cambia al cambiar de filtro: hace que las tarjetas de arriba repitan su animación.
+  // (La búsqueda no está aquí para que no se anime con cada letra que escribes)
+  const claveAnimacion = `${categoriaLista}|${subcategoriaLista}`;
 
   // Deslizar hacia abajo para actualizar desde Supabase
   const alRefrescar = async () => {
@@ -67,10 +162,11 @@ export default function HomeScreen() {
     setRefrescando(false);
   };
 
-  const cambiarCategoria = (nombre) => {
+  // Siempre la misma función: así los filtros no se redibujan de más
+  const cambiarCategoria = useCallback((nombre) => {
     setCategoriaActiva(nombre);
     setSubcategoria('Todas');
-  };
+  }, []);
 
   // Al tocar "Ver paquete" en la alerta, lleva a la pestaña Promos
   const abrirPaqueteDeAlerta = () => {
@@ -84,10 +180,10 @@ export default function HomeScreen() {
   );
 
   const productosFiltrados = useMemo(() => {
-    const palabras = normalizar(busqueda).split(/\s+/).filter(Boolean);
+    const palabras = normalizar(busquedaLista).split(/\s+/).filter(Boolean);
 
     // Favoritos siempre filtra por favoritos
-    if (categoriaActiva === 'Favoritos') {
+    if (categoriaLista === 'Favoritos') {
       const favs = productosInicio.filter((p) => favoritos.includes(p.id));
       return palabras.length ? favs.filter((p) => coincide(p, palabras)) : favs;
     }
@@ -98,42 +194,104 @@ export default function HomeScreen() {
     }
 
     // Sin búsqueda, aplica el filtro de categoría
-    if (categoriaActiva === 'Todos') return productosInicio;
+    if (categoriaLista === 'Todos') return productosInicio;
 
-    let lista = productosInicio.filter((p) => p.categoria === categoriaActiva);
-    if (categoriaActiva === 'Pizzas' && subcategoria !== 'Todas') {
-      lista = lista.filter((p) => p.subcategoria === subcategoria);
+    let lista = productosInicio.filter((p) => p.categoria === categoriaLista);
+    if (categoriaLista === 'Pizzas' && subcategoriaLista !== 'Todas') {
+      lista = lista.filter((p) => p.subcategoria === subcategoriaLista);
     }
     return lista;
-  }, [categoriaActiva, subcategoria, busqueda, favoritos, productosInicio]);
+  }, [categoriaLista, subcategoriaLista, busquedaLista, favoritos, productosInicio]);
+
+  // Lugar de cada tarjeta visible (0, 1, 2...). Las tarjetas se crean UNA sola vez;
+  // el filtro solo las esconde o muestra, y las de arriba repiten su animación.
+  const posiciones = useMemo(() => {
+    const mapa = new Map();
+    productosFiltrados.forEach((p, i) => mapa.set(p.id, i));
+    return mapa;
+  }, [productosFiltrados]);
 
   const fondoBoton = modoOscuro ? '#2A2A2A' : '#F2F2F2';
   const colorIconoSuave = '#8A8A8A';
 
   // Título de la sección de productos según lo que se esté viendo
   let tituloProductos = 'TODOS LOS PRODUCTOS';
-  if (categoriaActiva === 'Favoritos') tituloProductos = 'FAVORITOS';
-  else if (buscando) tituloProductos = 'RESULTADOS';
-  else if (categoriaActiva !== 'Todos') tituloProductos = categoriaActiva.toUpperCase();
+  if (categoriaLista === 'Favoritos') tituloProductos = 'FAVORITOS';
+  else if (buscandoLista) tituloProductos = 'RESULTADOS';
+  else if (categoriaLista !== 'Todos') tituloProductos = categoriaLista.toUpperCase();
 
-  const textoContador = buscando
-    ? `${productosFiltrados.length} ${productosFiltrados.length === 1 ? 'resultado' : 'resultados'} para "${busqueda.trim()}"`
+  const textoContador = buscandoLista
+    ? `${productosFiltrados.length} ${productosFiltrados.length === 1 ? 'resultado' : 'resultados'} para "${busquedaLista.trim()}"`
     : `${productosFiltrados.length} productos disponibles`;
+
+  // Qué mostrar cuando la lista está vacía (ícono, título, texto y botón)
+  let vacio;
+  if (productos.length === 0 && sinConexion) {
+    vacio = {
+      icono: 'cloud-offline-outline',
+      titulo: 'Sin conexión',
+      texto: 'No pudimos cargar el menú. Revisa tu internet e inténtalo de nuevo.',
+      boton: { texto: 'Reintentar', alPresionar: recargar },
+    };
+  } else if (productos.length === 0) {
+    vacio = {
+      icono: 'pizza-outline',
+      titulo: 'Cargando el menú...',
+      texto: 'Esto solo tarda unos segundos.',
+    };
+  } else if (categoriaLista === 'Favoritos' && !buscandoLista) {
+    vacio = {
+      icono: 'heart-outline',
+      titulo: 'Aún no tienes favoritos',
+      texto: 'Toca el corazón de cualquier producto para guardarlo aquí.',
+      boton: { texto: 'Ver el menú', alPresionar: () => cambiarCategoria('Todos') },
+    };
+  } else if (buscandoLista) {
+    vacio = {
+      icono: 'search-outline',
+      titulo: 'Sin resultados',
+      texto: `No encontramos "${busquedaLista.trim()}". Prueba con otra palabra, como "pizza" o "refresco".`,
+      boton: { texto: 'Borrar búsqueda', alPresionar: () => setBusqueda('') },
+    };
+  } else {
+    vacio = {
+      icono: 'pizza-outline',
+      titulo: 'Nada por aquí',
+      texto: 'Por ahora no hay productos en esta categoría.',
+    };
+  }
+
+  // Colores del aviso "sin internet"
+  const fondoAviso = modoOscuro ? '#2A2418' : '#FFF6E5';
+  const textoAviso = modoOscuro ? '#E0C48A' : '#8A5A00';
+
+  // El logo escondido queda justo encima de la barra de abajo
+  const alturaLogoEscondido = Math.max(insets.bottom - 6, 10) + 70 + 14;
 
   return (
     <SafeAreaView edges={['top']} style={[styles.safeArea, { backgroundColor: tema.fondo }]}>
-      <ScrollView
+      <Animated.ScrollView
+        ref={scrollRef}
         style={{ backgroundColor: tema.fondo }}
         showsVerticalScrollIndicator={false}
         stickyHeaderIndices={[2]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        scrollEventThrottle={16}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true }
+        )}
+        onContentSizeChange={alCambiarContenido}
+        onLayout={alMedirLista}
+        onScrollBeginDrag={alEmpezarArrastre}
+        onScrollEndDrag={alTerminarArrastre}
         refreshControl={
           <RefreshControl
             refreshing={refrescando}
             onRefresh={alRefrescar}
-            tintColor="#F5A623"
-            colors={['#F5A623']}
+            tintColor={NARANJA}
+            colors={[NARANJA]}
           />
         }
       >
@@ -174,8 +332,8 @@ export default function HomeScreen() {
               accessibilityLabel={modoOscuro ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
             >
               {modoOscuro
-                ? <IconoLuna color="#F5A623" size={19} />
-                : <IconoSol color="#F5A623" size={20} />}
+                ? <IconoLuna color={NARANJA} size={19} />
+                : <IconoSol color={NARANJA} size={20} />}
             </TouchableOpacity>
 
             {/* Botón de sucursal */}
@@ -184,7 +342,7 @@ export default function HomeScreen() {
               onPress={() => navigation.navigate('Sucursales')}
               activeOpacity={0.7}
             >
-              <IconoPin color="#F5A623" size={15} />
+              <IconoPin color={NARANJA} size={15} />
               <Text style={[styles.sucursalTexto, { color: tema.sucursalTexto }]}>
                 Sucursal
               </Text>
@@ -201,7 +359,7 @@ export default function HomeScreen() {
               buscadorActivo && styles.searchBoxActivo,
             ]}
           >
-            <IconoBuscar color={buscadorActivo ? '#F5A623' : colorIconoSuave} size={19} />
+            <IconoBuscar color={buscadorActivo ? NARANJA : colorIconoSuave} size={19} />
             <TextInput
               placeholder="Busca pizza, alitas, refresco..."
               placeholderTextColor={modoOscuro ? '#6A6A6A' : '#9A9A9A'}
@@ -247,6 +405,24 @@ export default function HomeScreen() {
               ))}
             </ScrollView>
           )}
+
+          {/* Aviso pequeño: sin internet, pero se ve el menú guardado */}
+          {mostrarAvisoSinRed && (
+            <View style={[styles.avisoSinRed, { backgroundColor: fondoAviso }]}>
+              <Ionicons name="cloud-offline-outline" size={16} color={textoAviso} />
+              <Text style={[styles.avisoSinRedTexto, { color: textoAviso }]} numberOfLines={1}>
+                Sin internet · mostrando el último menú guardado
+              </Text>
+              <Pressable
+                onPress={recargar}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Reintentar cargar el menú"
+              >
+                <Text style={styles.avisoSinRedBoton}>Reintentar</Text>
+              </Pressable>
+            </View>
+          )}
         </View>
 
         {/* ── FILTROS (sticky) ── */}
@@ -257,34 +433,33 @@ export default function HomeScreen() {
           />
         </View>
 
-        {/* Banner y promociones solo en la vista general */}
-        {!buscando && categoriaActiva === 'Todos' && (
-          <>
-            {/* ── HERO BANNER ── */}
-            <HeroBanner />
+        {/* Banner y promociones: se ESCONDEN en lugar de borrarse,
+            así al regresar a "Todos" ya están listos */}
+        <View style={mostrarBanner ? null : styles.oculto}>
+          {/* ── HERO BANNER ── */}
+          <HeroBanner />
 
-            {/* ── PROMOCIONES (solo si hay activas en Supabase) ── */}
-            {promociones.length > 0 && (
-              <View style={styles.seccion}>
-                <View style={styles.seccionHeader}>
-                  <Text style={[styles.seccionTitulo, { color: tema.texto }]}>
-                    PROMOCIONES
-                  </Text>
-                  <View style={styles.lineaAmarilla} />
-                </View>
-                <View style={styles.promosRow}>
-                  {promociones.slice(0, 2).map((promo) => (
-                    <PromoCard
-                      key={promo.id}
-                      promo={promo}
-                      onPress={() => navigation.navigate('Promos')}
-                    />
-                  ))}
-                </View>
+          {/* ── PROMOCIONES (solo si hay activas en Supabase) ── */}
+          {promociones.length > 0 && (
+            <View style={styles.seccion}>
+              <View style={styles.seccionHeader}>
+                <Text style={[styles.seccionTitulo, { color: tema.texto }]}>
+                  PROMOCIONES
+                </Text>
+                <View style={styles.lineaAmarilla} />
               </View>
-            )}
-          </>
-        )}
+              <View style={styles.promosRow}>
+                {promociones.slice(0, 2).map((promo) => (
+                  <PromoCard
+                    key={promo.id}
+                    promo={promo}
+                    onPress={() => navigation.navigate('Promos')}
+                  />
+                ))}
+              </View>
+            </View>
+          )}
+        </View>
 
         {/* ── TAMAÑOS (solo al ver Pizzas) ── */}
         {viendoPizzas && tamanos.length > 0 && (
@@ -320,7 +495,7 @@ export default function HomeScreen() {
             {textoContador}
           </Text>
 
-          {/* Sub-filtros de pizzas */}
+          {/* Sub-filtros de pizzas (la pastilla cambia al instante) */}
           {viendoPizzas && (
             <View style={styles.subFiltros}>
               {SUBCATEGORIAS_PIZZA.map((s) => {
@@ -353,31 +528,101 @@ export default function HomeScreen() {
 
         {/* ── LISTA DE PRODUCTOS ── */}
         <View style={styles.productos}>
-          {productosFiltrados.length === 0 ? (
+          {productosFiltrados.length === 0 && (
             <View style={styles.sinResultados}>
-              <Text style={styles.sinResultadosEmoji}>
-                {categoriaActiva === 'Favoritos' && !buscando ? '🤍' : '🍕'}
+              {/* Ícono dibujado dentro de un círculo (sin emojis) */}
+              <View style={[styles.circuloVacio, { backgroundColor: tema.card }]}>
+                <Ionicons name={vacio.icono} size={34} color={NARANJA} />
+              </View>
+              <Text style={[styles.sinResultadosTitulo, { color: tema.texto }]}>
+                {vacio.titulo}
               </Text>
               <Text style={[styles.sinResultadosTexto, { color: tema.textoSecundario }]}>
-                {categoriaActiva === 'Favoritos' && !buscando
-                  ? 'Aún no tienes favoritos.\nToca el corazón de cualquier producto.'
-                  : buscando
-                    ? `No encontramos "${busqueda.trim()}".\nPrueba con otra palabra, como "pizza" o "refresco".`
-                    : productos.length === 0
-                      ? 'Cargando el menú...\nDesliza hacia abajo para actualizar.'
-                      : 'Por ahora no hay productos en esta categoría.'}
+                {vacio.texto}
               </Text>
+              {vacio.boton && (
+                <Pressable
+                  onPress={vacio.boton.alPresionar}
+                  style={({ pressed }) => [styles.botonVacio, pressed && { opacity: 0.8 }]}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.textoBotonVacio}>{vacio.boton.texto}</Text>
+                </Pressable>
+              )}
             </View>
-          ) : (
-            productosFiltrados.map((producto, index) => (
-              <ProductCard key={producto.id} producto={producto} indice={index} />
-            ))
           )}
+
+          {/* Todas las tarjetas existen siempre; el filtro esconde las que no tocan
+              y las primeras visibles repiten su animación de entrada */}
+          {productosInicio.map((producto) => {
+            const posicion = posiciones.has(producto.id) ? posiciones.get(producto.id) : -1;
+            const seAnima = posicion >= 0 && posicion < TARJETAS_ANIMADAS;
+            return (
+              <View key={producto.id} style={posicion >= 0 ? null : styles.oculto}>
+                <ProductCard
+                  producto={producto}
+                  posicion={seAnima ? posicion : -1}
+                  animarAl={seAnima ? claveAnimacion : null}
+                />
+              </View>
+            );
+          })}
         </View>
 
         {/* Espacio para que la barra flotante no tape el último producto */}
         <View style={{ height: 110 }} />
-      </ScrollView>
+      </Animated.ScrollView>
+
+      {/* ── DETALLE ESCONDIDO: logo al seguir bajando hasta el final ── */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.logoEscondido,
+          {
+            bottom: alturaLogoEscondido,
+            opacity: progresoLogo,
+            transform: [
+              {
+                translateY: progresoLogo.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [24, 0],
+                }),
+              },
+              {
+                scale: progresoLogo.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.5, 1],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <Animated.View
+          style={{
+            transform: [
+              {
+                rotate: progresoLogo.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['-120deg', '0deg'],
+                }),
+              },
+            ],
+          }}
+        >
+          <LinearGradient
+            colors={['#FFC04D', '#F5A623', '#E0880A']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.logoCircle}
+          >
+            <View style={styles.logoInterior}>
+              <Image source={LOGO} style={styles.logoImagen} contentFit="contain" />
+            </View>
+          </LinearGradient>
+        </Animated.View>
+        <Text style={styles.logoEscondidoTexto}>LA PIZZA DE TU VIDA</Text>
+      </Animated.View>
 
       {/* ── ALERTA DE PAQUETES (sale una vez al abrir la app) ── */}
       <AlertaPaquetes oscuro={modoOscuro} onVerPaquete={abrirPaqueteDeAlerta} />
@@ -388,6 +633,9 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+  },
+  oculto: {
+    display: 'none',
   },
   header: {
     flexDirection: 'row',
@@ -411,7 +659,7 @@ const styles = StyleSheet.create({
     padding: 2,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#F5A623',
+    shadowColor: NARANJA,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 6,
@@ -432,6 +680,21 @@ const styles = StyleSheet.create({
     height: '100%',
   },
 
+  // Detalle escondido
+  logoEscondido: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    gap: 6,
+  },
+  logoEscondidoTexto: {
+    color: NARANJA,
+    fontFamily: 'Poppins_600SemiBold',
+    fontSize: 9,
+    letterSpacing: 2,
+  },
+
   headerMarca: {
     fontFamily: 'Poppins_700Bold',
     fontSize: 17,
@@ -439,7 +702,7 @@ const styles = StyleSheet.create({
   },
   headerSlogan: {
     fontFamily: 'Poppins_400Regular',
-    color: '#F5A623',
+    color: NARANJA,
     fontSize: 8,
     letterSpacing: 2,
   },
@@ -485,7 +748,7 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   searchBoxActivo: {
-    borderColor: '#F5A623',
+    borderColor: NARANJA,
   },
   searchInput: {
     flex: 1,
@@ -514,6 +777,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
+  // Aviso "sin internet"
+  avisoSinRed: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 10,
+  },
+  avisoSinRedTexto: {
+    flex: 1,
+    fontFamily: 'Poppins_600SemiBold',
+    fontSize: 11,
+  },
+  avisoSinRedBoton: {
+    color: NARANJA,
+    fontFamily: 'Poppins_700Bold',
+    fontSize: 12,
+  },
+
   // Filtros sticky
   filtrosSticky: {
     paddingVertical: 8,
@@ -537,7 +821,7 @@ const styles = StyleSheet.create({
   lineaAmarilla: {
     flex: 1,
     height: 2,
-    backgroundColor: '#F5A623',
+    backgroundColor: NARANJA,
     marginLeft: 10,
     borderRadius: 2,
   },
@@ -586,19 +870,43 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingBottom: 24,
   },
+
+  // Lista vacía (sin emojis: ícono dibujado en un círculo)
   sinResultados: {
     alignItems: 'center',
     paddingVertical: 60,
     paddingHorizontal: 32,
   },
-  sinResultadosEmoji: {
-    fontSize: 48,
-    marginBottom: 12,
+  circuloVacio: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  sinResultadosTitulo: {
+    fontFamily: 'Poppins_700Bold',
+    fontSize: 17,
+    textAlign: 'center',
   },
   sinResultadosTexto: {
     fontFamily: 'Poppins_400Regular',
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 13,
+    lineHeight: 19,
     textAlign: 'center',
+    marginTop: 4,
   },
-});                                                                                                         
+  botonVacio: {
+    marginTop: 18,
+    backgroundColor: NARANJA,
+    borderRadius: 22,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+  },
+  textoBotonVacio: {
+    fontFamily: 'Poppins_700Bold',
+    fontSize: 13,
+    color: '#1A1A1A',
+  },
+});

@@ -1,20 +1,38 @@
-import { useEffect, useState } from 'react';
+// src/screens/SucursalesScreen.js
+// Pantalla "Sucursal":
+// - Carrusel de fotos reales de la sucursal: se mueven solas cada pocos segundos
+//   y también se pueden deslizar con el dedo. Puntitos que indican la foto actual.
+// - Encima: pastilla Abierto/Cerrado, nombre y cuánto falta para abrir o cerrar.
+// - Botones Llamar, WhatsApp y Cómo llegar.
+// - Dirección, teléfono y horario.
+// - Al tocar otra vez "Sucursal" en la barra de abajo, sube hasta arriba.
+
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet,
-  Pressable, Linking, Alert,
+  Pressable, Linking, Alert, AccessibilityInfo,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIsFocused, useScrollToTop } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { useTema } from '../context/ThemeContext';
 import { useDatos } from '../context/DatosContext';
-import ImageBackground from '../components/ImagenFondo';
 import BotonContacto from '../components/BotonContacto';
 import {
   IconoTelefono, IconoPin, IconoReloj, IconoChevron,
 } from '../components/IconosUI';
 
+const NARANJA = '#F5A623';
 const INICIALES = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
 const ORDEN_SEMANA = [1, 2, 3, 4, 5, 6, 0]; // Lunes a Domingo
+
+// ---------- Ajustes del carrusel (puedes cambiarlos) ----------
+// Forma del carrusel (ancho / alto). Más bajo = más alto el carrusel.
+// 1.1 deja ver bien el letrero en las fotos verticales de la fachada.
+const PROPORCION_CARRUSEL = 1.1;
+// Cada cuántos segundos pasa sola a la siguiente foto
+const SEGUNDOS_POR_FOTO = 4;
 
 // Convierte 11 → "11:00 AM", 22 → "10:00 PM"
 function formatoHora(hora24) {
@@ -65,6 +83,91 @@ export default function SucursalesScreen() {
   const [estado, setEstado] = useState(() => calcularEstado(sucursal.horario));
   const hoy = new Date().getDay();
 
+  // Al tocar otra vez "Sucursal" en la barra de abajo, sube hasta arriba
+  const scrollRef = useRef(null);
+  useScrollToTop(scrollRef);
+
+  // ── Carrusel ──
+  const enPantalla = useIsFocused(); // solo se mueve solo si estás en esta pestaña
+  const carruselRef = useRef(null);
+  const tocandoRef = useRef(false); // true mientras el dedo está deslizando
+  const indiceRef = useRef(0); // foto actual (para el movimiento automático)
+  const [medidas, setMedidas] = useState({ ancho: 0, alto: 0 });
+  const [fotoActual, setFotoActual] = useState(0);
+  const [reinicio, setReinicio] = useState(0); // reinicia la cuenta tras deslizar a mano
+  const [reducirMovimiento, setReducirMovimiento] = useState(false);
+
+  // Fotos de Supabase; si no hay, la imagen de respaldo
+  const fotos = useMemo(() => {
+    const lista = Array.isArray(sucursal.imagenes) ? sucursal.imagenes.filter(Boolean) : [];
+    if (lista.length > 0) return lista;
+    return sucursal.imagen ? [sucursal.imagen] : [];
+  }, [sucursal.imagenes, sucursal.imagen]);
+
+  const cambiarFoto = (indice) => {
+    indiceRef.current = indice;
+    setFotoActual((actual) => (actual === indice ? actual : indice));
+  };
+
+  // Si cambian las fotos (por ejemplo, llegan de Supabase), regresa a la primera
+  useEffect(() => {
+    if (indiceRef.current >= fotos.length) {
+      cambiarFoto(0);
+      carruselRef.current?.scrollTo({ x: 0, animated: false });
+    }
+  }, [fotos.length]);
+
+  // Respeta "Reducir movimiento" del teléfono
+  useEffect(() => {
+    let activo = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((valor) => activo && setReducirMovimiento(valor))
+      .catch(() => {});
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReducirMovimiento);
+    return () => {
+      activo = false;
+      sub?.remove?.();
+    };
+  }, []);
+
+  // Movimiento automático: pasa a la siguiente foto cada pocos segundos
+  useEffect(() => {
+    if (!enPantalla || reducirMovimiento) return undefined;
+    if (fotos.length < 2 || !medidas.ancho) return undefined;
+
+    const temporizador = setInterval(() => {
+      if (tocandoRef.current) return; // si el usuario está deslizando, no interrumpe
+      const siguiente = (indiceRef.current + 1) % fotos.length;
+      carruselRef.current?.scrollTo({ x: siguiente * medidas.ancho, animated: true });
+      cambiarFoto(siguiente);
+    }, SEGUNDOS_POR_FOTO * 1000);
+
+    return () => clearInterval(temporizador);
+  }, [enPantalla, reducirMovimiento, fotos.length, medidas.ancho, reinicio]);
+
+  const alMedirCarrusel = (e) => {
+    const { width, height } = e.nativeEvent.layout;
+    if (width !== medidas.ancho || height !== medidas.alto) {
+      setMedidas({ ancho: width, alto: height });
+    }
+  };
+
+  // Mientras deslizas, actualiza el puntito
+  const alDeslizarFotos = (e) => {
+    if (!medidas.ancho) return;
+    const indice = Math.round(e.nativeEvent.contentOffset.x / medidas.ancho);
+    if (indice >= 0 && indice < fotos.length) cambiarFoto(indice);
+  };
+
+  const alEmpezarATocar = () => {
+    tocandoRef.current = true;
+  };
+
+  const alSoltar = () => {
+    tocandoRef.current = false;
+    setReinicio((n) => n + 1); // vuelve a contar los segundos desde cero
+  };
+
   // Recalcula al cambiar el horario (si lo editan en Supabase) y cada minuto
   useEffect(() => {
     setEstado(calcularEstado(sucursal.horario));
@@ -85,7 +188,11 @@ export default function SucursalesScreen() {
 
   return (
     <SafeAreaView edges={['top']} style={[styles.safeArea, { backgroundColor: tema.fondo }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scroll}
+      >
 
         {/* ── TÍTULO GRANDE ── */}
         <Text style={[styles.tituloGrande, { color: tema.texto }]}>Sucursal</Text>
@@ -93,24 +200,71 @@ export default function SucursalesScreen() {
           Visítanos o contáctanos directo
         </Text>
 
-        {/* ── TARJETA PRINCIPAL ── */}
-        <ImageBackground
-          source={{ uri: sucursal.imagen }}
-          style={styles.hero}
-        >
-          <LinearGradient
-            colors={['rgba(0,0,0,0.1)', 'rgba(0,0,0,0.35)', 'rgba(0,0,0,0.85)']}
-            locations={[0, 0.45, 1]}
-            style={StyleSheet.absoluteFill}
-          />
-          <View style={[styles.estadoBadge, { backgroundColor: estado.abierto ? '#27AE60' : '#C0392B' }]}>
-            <View style={styles.estadoPunto} />
-            <Text style={styles.estadoTexto}>{estado.abierto ? 'ABIERTO AHORA' : 'CERRADO'}</Text>
+        {/* ── CARRUSEL DE FOTOS DE LA SUCURSAL ── */}
+        <View style={styles.hero} onLayout={alMedirCarrusel}>
+          {medidas.ancho > 0 && (
+            <ScrollView
+              ref={carruselRef}
+              horizontal
+              pagingEnabled
+              bounces={false}
+              showsHorizontalScrollIndicator={false}
+              scrollEnabled={fotos.length > 1}
+              onScroll={alDeslizarFotos}
+              onScrollBeginDrag={alEmpezarATocar}
+              onScrollEndDrag={alSoltar}
+              onMomentumScrollEnd={alDeslizarFotos}
+              scrollEventThrottle={16}
+              decelerationRate="fast"
+              style={StyleSheet.absoluteFill}
+            >
+              {fotos.map((uri, i) => (
+                <Image
+                  key={`${uri}-${i}`}
+                  source={{ uri }}
+                  style={{ width: medidas.ancho, height: medidas.alto }}
+                  contentFit="cover"
+                  contentPosition="center"
+                  transition={250}
+                  cachePolicy="memory-disk"
+                  accessibilityLabel={`Foto de la sucursal ${i + 1} de ${fotos.length}`}
+                />
+              ))}
+            </ScrollView>
+          )}
+
+          {/* Todo lo de encima no estorba al deslizar (pointerEvents="none") */}
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <LinearGradient
+              colors={['rgba(0,0,0,0.30)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.35)', 'rgba(0,0,0,0.88)']}
+              locations={[0, 0.3, 0.6, 1]}
+              style={StyleSheet.absoluteFill}
+            />
+
+            <View style={[styles.estadoBadge, { backgroundColor: estado.abierto ? '#27AE60' : '#C0392B' }]}>
+              <View style={styles.estadoPunto} />
+              <Text style={styles.estadoTexto}>{estado.abierto ? 'ABIERTO AHORA' : 'CERRADO'}</Text>
+            </View>
+
+            {/* Puntitos: en qué foto vas */}
+            {fotos.length > 1 && (
+              <View style={styles.puntos}>
+                {fotos.map((_, i) => (
+                  <View
+                    key={i}
+                    style={[styles.punto, i === fotoActual && styles.puntoActivo]}
+                  />
+                ))}
+              </View>
+            )}
+
+            <View style={styles.heroTextos}>
+              <Text style={styles.heroMarca}>PIZZETO'S</Text>
+              <Text style={styles.heroNombre}>{sucursal.nombre}</Text>
+              <Text style={styles.heroDetalle}>{estado.detalle}</Text>
+            </View>
           </View>
-          <Text style={styles.heroMarca}>PIZZETO'S</Text>
-          <Text style={styles.heroNombre}>{sucursal.nombre}</Text>
-          <Text style={styles.heroDetalle}>{estado.detalle}</Text>
-        </ImageBackground>
+        </View>
 
         {/* ── BOTONES DE ACCIÓN ── */}
         <View style={styles.accionesRow}>
@@ -126,7 +280,7 @@ export default function SucursalesScreen() {
             onPress={comoLlegar}
           >
             <View style={[styles.infoIcono, { backgroundColor: fondoIconoInfo }]}>
-              <IconoPin color="#F5A623" size={19} />
+              <IconoPin color={NARANJA} size={19} />
             </View>
             <View style={styles.infoTextos}>
               <Text style={styles.infoEtiqueta}>DIRECCIÓN</Text>
@@ -142,7 +296,7 @@ export default function SucursalesScreen() {
             onPress={llamar}
           >
             <View style={[styles.infoIcono, { backgroundColor: fondoIconoInfo }]}>
-              <IconoTelefono color="#F5A623" size={18} />
+              <IconoTelefono color={NARANJA} size={18} />
             </View>
             <View style={styles.infoTextos}>
               <Text style={styles.infoEtiqueta}>TELÉFONO</Text>
@@ -156,7 +310,7 @@ export default function SucursalesScreen() {
           {/* ── HORARIO COMPACTO ── */}
           <View style={styles.infoFila}>
             <View style={[styles.infoIcono, { backgroundColor: fondoIconoInfo }]}>
-              <IconoReloj color="#F5A623" size={19} />
+              <IconoReloj color={NARANJA} size={19} />
             </View>
             <View style={styles.infoTextos}>
               <Text style={styles.infoEtiqueta}>HORARIO · TODOS LOS DÍAS</Text>
@@ -170,7 +324,7 @@ export default function SucursalesScreen() {
               return (
                 <View
                   key={dia}
-                  style={[styles.dia, { backgroundColor: esHoy ? '#F5A623' : fondoDia }]}
+                  style={[styles.dia, { backgroundColor: esHoy ? NARANJA : fondoDia }]}
                   accessibilityLabel={esHoy ? 'Hoy' : undefined}
                 >
                   <Text style={[styles.diaTexto, { color: esHoy ? '#1A1A1A' : tema.textoSecundario }]}>
@@ -204,8 +358,15 @@ const styles = StyleSheet.create({
   tituloGrande: { fontFamily: 'Poppins_700Bold', fontSize: 30, lineHeight: 38 },
   subtitulo: { fontFamily: 'Poppins_400Regular', fontSize: 13, marginBottom: 16 },
 
-  hero: { height: 190, borderRadius: 20, justifyContent: 'flex-end', padding: 16 },
-  heroMarca: { color: '#F5A623', fontFamily: 'Poppins_600SemiBold', fontSize: 10, letterSpacing: 3 },
+  // Carrusel
+  hero: {
+    aspectRatio: PROPORCION_CARRUSEL,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#1A1612',
+  },
+  heroTextos: { position: 'absolute', left: 16, right: 16, bottom: 16 },
+  heroMarca: { color: NARANJA, fontFamily: 'Poppins_600SemiBold', fontSize: 10, letterSpacing: 3 },
   heroNombre: { color: '#FFF', fontFamily: 'Poppins_700Bold', fontSize: 22, lineHeight: 28 },
   heroDetalle: { color: 'rgba(255,255,255,0.85)', fontFamily: 'Poppins_400Regular', fontSize: 12 },
 
@@ -217,13 +378,22 @@ const styles = StyleSheet.create({
   estadoPunto: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#FFF' },
   estadoTexto: { color: '#FFF', fontFamily: 'Poppins_700Bold', fontSize: 9, letterSpacing: 0.5 },
 
+  puntos: {
+    position: 'absolute', top: 16, right: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderRadius: 20, paddingHorizontal: 8, paddingVertical: 6,
+  },
+  punto: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.6)' },
+  puntoActivo: { width: 16, backgroundColor: NARANJA },
+
   accionesRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
 
   infoCard: { borderRadius: 18, marginTop: 14, overflow: 'hidden', ...sombra },
   infoFila: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
   infoIcono: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
   infoTextos: { flex: 1 },
-  infoEtiqueta: { color: '#F5A623', fontFamily: 'Poppins_600SemiBold', fontSize: 9, letterSpacing: 1 },
+  infoEtiqueta: { color: NARANJA, fontFamily: 'Poppins_600SemiBold', fontSize: 9, letterSpacing: 1 },
   infoValor: { fontFamily: 'Poppins_400Regular', fontSize: 13, lineHeight: 18, marginTop: 2 },
   separador: { height: 1, marginLeft: 66, marginRight: 14 },
 

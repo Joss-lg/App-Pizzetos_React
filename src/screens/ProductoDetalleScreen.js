@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, Animated, Easing,
-  Linking, Alert, Share, ScrollView, useWindowDimensions,
+  Linking, Alert, Share, ScrollView, Platform, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,6 +15,9 @@ import { useTema } from '../context/ThemeContext';
 import { useDatos } from '../context/DatosContext';
 import BotonFavorito from '../components/BotonFavorito';
 import { IconoChat, IconoTelefono } from '../components/IconosUI';
+
+// En Android el difuminado (BlurView) no es confiable: se usa fondo sólido
+const ES_ANDROID = Platform.OS === 'android';
 
 // Máximo de productos en "También te puede gustar"
 const MAX_RELACIONADOS = 10;
@@ -763,13 +766,19 @@ export default function ProductoDetalleScreen({ route, navigation }) {
         </View>
       </Animated.ScrollView>
 
-      {/* ── BARRA SUPERIOR (se difumina al hacer scroll) ── */}
+      {/* ── BARRA SUPERIOR (aparece al hacer scroll) ── */}
       <View
         style={[styles.barra, { paddingTop: insets.top, height: insets.top + ALTO_BARRA }]}
         pointerEvents="box-none"
       >
         <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: barraFondo }]}>
-          <BlurView intensity={60} tint={modoOscuro ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+          {ES_ANDROID ? (
+            // Android: fondo sólido del color del tema (el difuminado no es confiable)
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: tema.header }]} />
+          ) : (
+            // iPhone: vidrio difuminado
+            <BlurView intensity={60} tint={modoOscuro ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+          )}
           <View style={[styles.barraBorde, { backgroundColor: bordeSuave }]} />
         </Animated.View>
 

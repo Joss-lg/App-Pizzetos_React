@@ -3,6 +3,8 @@
 //  1) Los avisos escritos a mano en Supabase (tabla "notificaciones").
 //  2) Las notificaciones diarias que ya sonaron en el celular (src/lib/recordatorios.js).
 // Guarda cuáles ya se leyeron y programa las notificaciones diarias.
+// En la pestaña Avisos solo se muestran los de las últimas 24 horas;
+// los más viejos se quitan solos (las notificaciones del teléfono no cambian).
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AppState } from 'react-native';
@@ -17,6 +19,23 @@ import {
 
 const NotificacionesContext = createContext();
 const CLAVE_LEIDAS = 'pizzetos:notificacionesLeidas';
+
+// ---------- Ajuste (puedes cambiarlo) ----------
+// Cuántas horas se queda un aviso en la pestaña Avisos
+const HORAS_VISIBLE = 24;
+const TIEMPO_VISIBLE_MS = HORAS_VISIBLE * 60 * 60 * 1000;
+
+// Cada cuánto se revisa si ya venció algún aviso (1 minuto)
+const REVISAR_CADA_MS = 60 * 1000;
+
+// ¿El aviso sigue dentro de las últimas 24 horas?
+// Si no tiene fecha, se deja visible (no sabemos cuánto tiempo lleva).
+function sigueVigente(aviso, ahora) {
+  if (!aviso.fecha) return true;
+  const fecha = new Date(aviso.fecha).getTime();
+  if (isNaN(fecha)) return true;
+  return ahora - fecha < TIEMPO_VISIBLE_MS;
+}
 
 // Lleva a la pantalla correcta según el destino del aviso.
 // Acepta el texto de Supabase ('Promos', 'Sucursales', 'Inicio')
@@ -39,9 +58,12 @@ export function NotificacionesProvider({ children }) {
 
   const [idsLeidas, setIdsLeidas] = useState([]);
   const [recordatorios, setRecordatorios] = useState([]);
+  // La hora "actual" que usa la lista; se actualiza sola para quitar los vencidos
+  const [ahora, setAhora] = useState(() => Date.now());
 
   // Vuelve a leer las notificaciones diarias que ya sonaron
   const refrescarRecordatorios = useCallback(async () => {
+    setAhora(Date.now());
     try {
       const lista = await obtenerRecordatoriosPasados();
       setRecordatorios(lista);
@@ -61,6 +83,12 @@ export function NotificacionesProvider({ children }) {
       .catch(() => {});
     refrescarRecordatorios();
   }, [refrescarRecordatorios]);
+
+  // Cada minuto se revisa si algún aviso ya cumplió 24 horas
+  useEffect(() => {
+    const reloj = setInterval(() => setAhora(Date.now()), REVISAR_CADA_MS);
+    return () => clearInterval(reloj);
+  }, []);
 
   // Al regresar a la app (desde segundo plano) se actualiza la lista
   useEffect(() => {
@@ -98,16 +126,19 @@ export function NotificacionesProvider({ children }) {
     AsyncStorage.setItem(CLAVE_LEIDAS, JSON.stringify(ids)).catch(() => {});
   };
 
-  // Lista final: Supabase + diarias, las más nuevas primero, con su marca de leída
+  // Lista final: Supabase + diarias, solo las de las últimas 24 horas,
+  // las más nuevas primero, con su marca de leída
   const notificaciones = useMemo(() => {
-    const todas = [...base, ...recordatorios].map((n) => ({
-      ...n,
-      leida: idsLeidas.includes(n.id),
-    }));
+    const todas = [...base, ...recordatorios]
+      .filter((n) => sigueVigente(n, ahora))
+      .map((n) => ({
+        ...n,
+        leida: idsLeidas.includes(n.id),
+      }));
     return todas.sort(
       (a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime()
     );
-  }, [base, recordatorios, idsLeidas]);
+  }, [base, recordatorios, idsLeidas, ahora]);
 
   const marcarLeida = useCallback(
     (id) =>

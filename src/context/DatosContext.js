@@ -55,6 +55,8 @@ const convertirSucursal = (s) => ({
   horario: { apertura: s.hora_apertura, cierre: s.hora_cierre },
   horarioTexto: `${formatoHora(s.hora_apertura)} – ${formatoHora(s.hora_cierre)}`,
   imagen: s.imagen_url,
+  // Fotos reales de la sucursal para el carrusel (columna "imagenes" en Supabase)
+  imagenes: Array.isArray(s.imagenes) ? s.imagenes.filter(Boolean) : [],
 });
 
 const convertirNotificacion = (n) => ({
@@ -66,7 +68,7 @@ const convertirNotificacion = (n) => ({
   fecha: n.fecha,
 });
 
-// NUEVO: tamaños de pizza (Chica, Mediana, Grande, Familiar)
+// Tamaños de pizza (Chica, Mediana, Grande, Familiar)
 const convertirTamano = (t) => ({
   id: t.id,
   nombre: t.nombre,
@@ -128,7 +130,8 @@ export function DatosProvider({ children }) {
 
       const resumen =
         `${nuevos.productos.length} productos, ${nuevos.tamanos.length} tamaños, ` +
-        `${nuevos.promociones.length} promociones, ${nuevos.notificaciones.length} avisos`;
+        `${nuevos.promociones.length} promociones, ${nuevos.notificaciones.length} avisos, ` +
+        `${nuevos.sucursal.imagenes?.length ?? 0} fotos de sucursal`;
       console.log(`✅ Supabase: ${resumen}`);
       if (DEPURAR) Alert.alert('✅ Supabase conectado', resumen);
     } catch (e) {
